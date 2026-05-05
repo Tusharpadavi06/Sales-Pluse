@@ -31,20 +31,12 @@ export default function ActualEntry({ user }: ActualEntryProps) {
 
   const fetchEmployees = async () => {
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .order('full_name');
-      
-      const { data, error } = await query;
       if (error) throw error;
-      
-      let filtered = data || [];
-      if (filters.branch !== 'All') {
-        filtered = filtered.filter(p => p.branch_ids?.includes(filters.branch));
-      }
-      
-      setEmployees(filtered);
+      if (data) setEmployees(data);
     } catch (err) {
       console.error('Error fetching employees:', err);
     }
@@ -63,7 +55,7 @@ export default function ActualEntry({ user }: ActualEntryProps) {
       }
 
       if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
-      if (filters.unit !== 'All') query = query.eq('unit_name', filters.unit);
+      if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
       if (filters.year) query = query.eq('year', filters.year);
       if (filters.employee !== 'All') query = query.eq('salesperson_id', filters.employee);
 
@@ -71,17 +63,16 @@ export default function ActualEntry({ user }: ActualEntryProps) {
       if (error) throw error;
 
       if (data && data.length > 0) {
-        // Group data by (customer, unit) to recreate the grid rows
         const groupedRows: Record<string, any> = {};
         
         data.forEach(record => {
-          const key = `${record.customer_name}-${record.unit_name}`;
+          const key = `${record.customer_name}-${record.Unit_name}-${record.salesperson_id}`;
           if (!groupedRows[key]) {
             groupedRows[key] = {
               id: key,
               customer: record.customer_name,
               branch: record.branch_id,
-              unit: record.unit_name,
+              unit: record.Unit_name,
               monthData: {}
             };
           }
@@ -89,16 +80,17 @@ export default function ActualEntry({ user }: ActualEntryProps) {
           groupedRows[key].monthData[record.month] = {
             target: Number(record.target_amount) || 0,
             actual: Number(record.actual_amount) || 0,
+            target_qty: Number(record.target_unit) || 0,
+            actual_qty: Number(record.actual_unit) || 0,
             gap: Math.max(0, (Number(record.target_amount) || 0) - (Number(record.actual_amount) || 0)),
             record_id: record.id
           };
         });
 
-        // Ensure all months are present in monthData for each row
         const finalEntries = Object.values(groupedRows).map(row => {
           MONTHS.forEach(m => {
             if (!row.monthData[m]) {
-              row.monthData[m] = { target: 0, actual: 0, gap: 0, record_id: null };
+              row.monthData[m] = { target: 0, actual: 0, target_qty: 0, actual_qty: 0, gap: 0, record_id: null };
             }
           });
           return row;
@@ -123,18 +115,28 @@ export default function ActualEntry({ user }: ActualEntryProps) {
     fetchData();
   }, [filters]);
 
-  const updateActual = (rowId: string, month: string, value: number) => {
+  const updateActual = (rowId: string, month: string, value: number, field: 'amt' | 'qty') => {
     setEntries(prev => prev.map(entry => {
       if (entry.id === rowId) {
         const currentData = entry.monthData[month];
-        const newGap = Math.max(0, currentData.target - value);
-        return {
-          ...entry,
-          monthData: {
-            ...entry.monthData,
-            [month]: { ...currentData, actual: value, gap: newGap }
-          }
-        };
+        if (field === 'amt') {
+          const newGap = Math.max(0, currentData.target - value);
+          return {
+            ...entry,
+            monthData: {
+              ...entry.monthData,
+              [month]: { ...currentData, actual: value, gap: newGap }
+            }
+          };
+        } else {
+          return {
+            ...entry,
+            monthData: {
+              ...entry.monthData,
+              [month]: { ...currentData, actual_qty: value }
+            }
+          };
+        }
       }
       return entry;
     }));
@@ -152,7 +154,7 @@ export default function ActualEntry({ user }: ActualEntryProps) {
             recordsToUpsert.push({
               id: data.record_id,
               actual_amount: data.actual,
-              // We should probably also update gap_value if we want but target - actual is calculated
+              actual_unit: data.actual_qty,
             });
           }
         });
@@ -218,7 +220,7 @@ export default function ActualEntry({ user }: ActualEntryProps) {
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={filters.branch}
-                  onChange={e => setFilters({...filters, branch: e.target.value})}
+                  onChange={e => setFilters({...filters, branch: e.target.value, employee: 'All'})}
                   disabled={user.role !== 'Admin'}
                 >
                   <option value="All">All Branches</option>
@@ -259,11 +261,13 @@ export default function ActualEntry({ user }: ActualEntryProps) {
                   onChange={e => setFilters({...filters, employee: e.target.value})}
                 >
                   <option value="All">All Staff</option>
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.full_name} ({emp.role})
-                    </option>
-                  ))}
+                  {employees
+                    .filter(e => filters.branch === 'All' || e.branch_ids?.includes(filters.branch))
+                    .map(emp => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.full_name} ({emp.role})
+                      </option>
+                    ))}
                 </select>
               </div>
             )}
@@ -304,20 +308,37 @@ export default function ActualEntry({ user }: ActualEntryProps) {
                       return (
                         <td key={month} className="p-4 transition-all">
                           <div className="space-y-3">
-                            <div className="flex items-center justify-between px-3 py-2 bg-zinc-100/50 rounded-xl">
-                              <span className="text-[9px] font-black text-zinc-400 uppercase">Target</span>
-                              <span className="text-xs font-black tabular-nums">{formatCurrency(data.target)}</span>
+                            <div className="flex items-center justify-between px-3 py-1 bg-zinc-100/50 rounded-lg">
+                              <span className="text-[8px] font-black text-zinc-400 uppercase">Target Qty</span>
+                              <span className="text-[10px] font-black tabular-nums">{data.target_qty}</span>
                             </div>
                             
-                            <div className="relative group/input">
-                              <label className="absolute -top-2 left-3 px-1 bg-white text-[8px] font-black text-zinc-300 uppercase z-10">Actual</label>
-                              <Input 
-                                type="number"
-                                className="h-11 text-sm font-bold tabular-nums rounded-xl border-zinc-200 transition-all group-hover/input:border-zinc-400"
-                                placeholder="Enter Actual..."
-                                value={data.actual || ''}
-                                onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0)}
-                              />
+                            <div className="flex items-center justify-between px-3 py-1 bg-zinc-100/50 rounded-lg">
+                              <span className="text-[8px] font-black text-zinc-400 uppercase">Target Value</span>
+                              <span className="text-[10px] font-black tabular-nums">{formatCurrency(data.target)}</span>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="relative group/input">
+                                <label className="absolute -top-2 left-2 px-1 bg-white text-[7px] font-black text-zinc-300 uppercase z-10">Actual Qty</label>
+                                <Input 
+                                  type="number"
+                                  className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
+                                  placeholder="Qty"
+                                  value={data.actual_qty || ''}
+                                  onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0, 'qty')}
+                                />
+                              </div>
+                              <div className="relative group/input">
+                                <label className="absolute -top-2 left-2 px-1 bg-white text-[7px] font-black text-zinc-300 uppercase z-10">Actual Amt</label>
+                                <Input 
+                                  type="number"
+                                  className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
+                                  placeholder="Amt"
+                                  value={data.actual || ''}
+                                  onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0, 'amt')}
+                                />
+                              </div>
                             </div>
 
                             <div className={cn(

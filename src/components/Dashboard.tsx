@@ -37,7 +37,7 @@ const COLORS = ['#000000', '#333333', '#666666', '#999999', '#CCCCCC'];
 export default function Dashboard({ user }: DashboardProps) {
   const [filters, setFilters] = useState<DashboardFilters>({
     customer: '',
-    year: YEARS[0],
+    year: YEARS[2],
     month: 'All',
     unit: 'All',
     branch: user.role === 'Admin' ? 'All' : user.branch_ids[0],
@@ -63,27 +63,12 @@ export default function Dashboard({ user }: DashboardProps) {
 
   const fetchEmployees = async () => {
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .order('full_name');
-      
-      // Filter by selected branch if not "All"
-      if (filters.branch !== 'All') {
-        // Since profiles might not have a direct branch column we can filter easily, 
-        // we'll fetch all and filter in JS if needed, but if there's a branch column in profiles we'd use it.
-        // Assuming we want to filter staff belonging to that branch.
-      }
-
-      const { data, error } = await query;
       if (error) throw error;
-      
-      let filtered = data || [];
-      if (filters.branch !== 'All') {
-        filtered = filtered.filter(p => p.branch_ids?.includes(filters.branch));
-      }
-      
-      setEmployees(filtered);
+      if (data) setEmployees(data);
     } catch (err) {
       console.error('Error fetching employees:', err);
     }
@@ -93,7 +78,7 @@ export default function Dashboard({ user }: DashboardProps) {
     setLoading(true);
     try {
       let query = supabase.from('Sales_database').select('*');
-
+      
       // Apply Role-Based Restrictions
       if (user.role === 'Sales Person') {
         query = query.eq('salesperson_id', user.id);
@@ -103,7 +88,7 @@ export default function Dashboard({ user }: DashboardProps) {
 
       // Apply User Filters
       if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
-      if (filters.unit !== 'All') query = query.eq('unit_name', filters.unit);
+      if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
       if (filters.year) query = query.eq('year', filters.year);
       if (filters.employee !== 'All') query = query.eq('salesperson_id', filters.employee);
       if (filters.customer) query = query.ilike('customer_name', `%${filters.customer}%`);
@@ -134,9 +119,9 @@ export default function Dashboard({ user }: DashboardProps) {
       const unitsMap: any = {};
       UNITS.forEach(u => unitsMap[u] = { name: u, target: 0, actual: 0 });
       salesData?.forEach(s => { 
-        if (unitsMap[s.unit_name]) {
-          unitsMap[s.unit_name].target += Number(s.target_amount) || 0;
-          unitsMap[s.unit_name].actual += Number(s.actual_amount) || 0;
+        if (unitsMap[s.Unit_name]) {
+          unitsMap[s.Unit_name].target += Number(s.target_amount) || 0;
+          unitsMap[s.Unit_name].actual += Number(s.actual_amount) || 0;
         }
       });
       
@@ -144,7 +129,10 @@ export default function Dashboard({ user }: DashboardProps) {
       const empMap: any = {};
       salesData?.forEach(s => {
         const salespersonId = s.salesperson_id;
-        if (!empMap[salespersonId]) empMap[salespersonId] = { name: 'Staff', target: 0, actual: 0 };
+        if (!empMap[salespersonId]) {
+          const emp = employees.find(e => e.id === salespersonId);
+          empMap[salespersonId] = { name: emp?.full_name || 'Staff', target: 0, actual: 0 };
+        }
         empMap[salespersonId].target += Number(s.target_amount) || 0;
         empMap[salespersonId].actual += Number(s.actual_amount) || 0;
       });
@@ -227,7 +215,7 @@ export default function Dashboard({ user }: DashboardProps) {
                 <select 
                   className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-lg focus:ring-1 focus:ring-black outline-none appearance-none"
                   value={filters.branch}
-                  onChange={e => setFilters({...filters, branch: e.target.value})}
+                  onChange={e => setFilters({...filters, branch: e.target.value, employee: 'All'})}
                   disabled={user.role !== 'Admin'}
                 >
                   <option value="All">All Branches</option>
@@ -281,11 +269,13 @@ export default function Dashboard({ user }: DashboardProps) {
                   onChange={e => setFilters({...filters, employee: e.target.value})}
                 >
                   <option value="All">All Staff</option>
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.full_name} ({emp.role})
-                    </option>
-                  ))}
+                  {employees
+                    .filter(e => filters.branch === 'All' || e.branch_ids?.includes(filters.branch))
+                    .map(emp => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.full_name} ({emp.role})
+                      </option>
+                    ))}
                 </select>
               </div>
             )}

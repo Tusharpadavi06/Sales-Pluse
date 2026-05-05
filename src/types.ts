@@ -33,9 +33,11 @@ export interface ActualEntry {
 export interface SalesDatabaseEntry {
   id: string;
   customer_name: string;
-  unit_name: string;
+  Unit_name: string;
   month: string;
   year: string;
+  target_unit: number;
+  actual_unit: number;
   target_amount: number;
   actual_amount: number;
   salesperson_id: string;

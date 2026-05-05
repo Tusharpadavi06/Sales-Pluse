@@ -22,6 +22,7 @@ interface TargetRow {
   unit: string;
   year: string;
   monthly_targets: MonthlyTarget;
+  monthly_units: MonthlyTarget;
   record_ids?: Record<string, string>;
   salesperson_id: string;
 }
@@ -50,32 +51,26 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
 
   const fetchEmployees = async () => {
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .order('full_name');
-      
-      const { data, error } = await query;
       if (error) throw error;
-      
-      let filtered = data || [];
-      if (filters.branch !== 'All') {
-        filtered = filtered.filter(p => p.branch_ids?.includes(filters.branch));
-      }
-      
-      setEmployees(filtered);
+      if (data) setEmployees(data);
     } catch (err) {
       console.error('Error fetching employees:', err);
     }
   };
 
   const fetchData = async () => {
+    if (!filters.year) return;
     setLoading(true);
     try {
       let query = supabase.from('Sales_database').select('*');
       
+      // Filter based on currently active viewing filters
       if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
-      if (filters.unit !== 'All') query = query.eq('unit_name', filters.unit);
+      if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
       if (filters.year) query = query.eq('year', filters.year);
       if (filters.employee !== 'All') query = query.eq('salesperson_id', filters.employee);
 
@@ -83,24 +78,26 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
       if (error) throw error;
 
       if (data) {
-        // Group data by (customer, unit) to recreate the grid rows
         const groupedRows: Record<string, TargetRow> = {};
         
         data.forEach(record => {
-          const key = `${record.customer_name}-${record.unit_name}`;
+          // Key by customer, unit, and salesperson to ensure distinct rows for different assignments
+          const key = `${record.customer_name}-${record.Unit_name}-${record.salesperson_id}`;
           if (!groupedRows[key]) {
             groupedRows[key] = {
-              id: key, // We'll use this for mapping, but individual records have their own IDs
+              id: key,
               customer_name: record.customer_name,
               branch: record.branch_id,
-              unit: record.unit_name,
+              unit: record.Unit_name,
               year: record.year,
               monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
-              record_ids: {}, // Store IDs for updates
+              monthly_units: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
+              record_ids: {},
               salesperson_id: record.salesperson_id
             };
           }
           groupedRows[key].monthly_targets[record.month] = Number(record.target_amount) || 0;
+          groupedRows[key].monthly_units[record.month] = Number(record.target_unit) || 0;
           if (!groupedRows[key].record_ids) groupedRows[key].record_ids = {};
           groupedRows[key].record_ids[record.month] = record.id;
         });
@@ -111,7 +108,6 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
       }
     } catch (error) {
       console.error('Fetch Error:', error);
-      // Removed notification as requested
     } finally {
       setLoading(false);
     }
@@ -137,6 +133,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
       unit: filters.unit === 'All' ? UNITS[0] : filters.unit, 
       year: filters.year,
       monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
+      monthly_units: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
       record_ids: {},
       salesperson_id: filters.employee === 'All' ? user.id : filters.employee
     }]);
@@ -160,34 +157,43 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
     setRows(rows.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
 
-  const updateMonthlyValue = (rowId: string, month: string, value: number) => {
+  const updateMonthlyValue = (rowId: string, month: string, value: number, field: 'amt' | 'unit') => {
     setRows(rows.map(r => {
       if (r.id === rowId) {
-        return {
-          ...r,
-          monthly_targets: { ...r.monthly_targets, [month]: value }
-        };
+        if (field === 'amt') {
+          return {
+            ...r,
+            monthly_targets: { ...r.monthly_targets, [month]: value }
+          };
+        } else {
+          return {
+            ...r,
+            monthly_units: { ...r.monthly_units, [month]: value }
+          };
+        }
       }
       return r;
     }));
   };
 
   const handleSave = async () => {
+    if (rows.length === 0) return;
     setLoading(true);
     try {
       const recordsToUpsert: any[] = [];
       
       rows.forEach(r => {
+        r.customer_name = r.customer_name.trim();
         MONTHS.forEach(m => {
           const val = r.monthly_targets[m];
-          // We save even if 0 if there was a previous record to clear it, or better yet only if changed.
-          // For simplicity, we upsert all rows currently in the grid.
+          const unitCount = r.monthly_units[m];
           const payload: any = {
             customer_name: r.customer_name,
-            unit_name: r.unit,
+            Unit_name: r.unit,
             month: m,
-            year: filters.year,
+            year: r.year || filters.year,
             target_amount: val,
+            target_unit: unitCount,
             branch_id: r.branch,
             salesperson_id: r.salesperson_id
           };
@@ -196,7 +202,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
             payload.id = r.record_ids[m];
           }
           
-          // Only add if it has a value or we are updating an existing record
+          // Only push if there is actual target value or we are specifically zeroing an existing record
           if (val > 0 || payload.id) {
             recordsToUpsert.push(payload);
           }
@@ -205,14 +211,18 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
 
       if (recordsToUpsert.length > 0) {
         const { error } = await supabase.from('Sales_database').upsert(recordsToUpsert);
-        if (error) throw error;
+        if (error) {
+          console.error('Supabase Error:', error);
+          toast.error(`Database Error: ${error.message}`);
+          throw error;
+        }
       }
 
       toast.success('Targets committed to Sales Database');
       fetchData();
     } catch (error) {
       console.error('Save Error:', error);
-      toast.error('Failed to commit projections');
+      toast.error(`Save Error: ${error instanceof Error ? error.message : 'Check database connectivity'}`);
     } finally {
       setLoading(false);
     }
@@ -238,6 +248,10 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
           monthly_targets: MONTHS.reduce((acc, m) => ({
             ...acc,
             [m]: bulkData.selectedMonths.includes(m) ? value : 0
+          }), {}),
+          monthly_units: MONTHS.reduce((acc, m) => ({
+            ...acc,
+            [m]: 0 
           }), {}),
           record_ids: {},
           salesperson_id: bulkData.targetSalesperson
@@ -296,7 +310,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={filters.branch}
-                  onChange={e => setFilters({...filters, branch: e.target.value})}
+                  onChange={e => setFilters({...filters, branch: e.target.value, employee: 'All'})}
                   disabled={user.role !== 'Admin'}
                 >
                   <option value="All">All Branches</option>
@@ -337,11 +351,13 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                   onChange={e => setFilters({...filters, employee: e.target.value})}
                 >
                   <option value="All">All Staff</option>
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.full_name} ({emp.role})
-                    </option>
-                  ))}
+                  {employees
+                    .filter(e => filters.branch === 'All' || e.branch_ids?.includes(filters.branch))
+                    .map(emp => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.full_name} ({emp.role})
+                      </option>
+                    ))}
                 </select>
               </div>
             )}
@@ -360,7 +376,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[200px]">Customer Name</th>
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[120px]">Unit</th>
                   {MONTHS.map(m => (
-                    <th key={m} className="p-4 text-center text-[10px] font-black uppercase tracking-widest min-w-[100px]">
+                    <th key={m} className="p-4 text-center text-[10px] font-black uppercase tracking-widest min-w-[140px]">
                       {m.substring(0, 3)}
                     </th>
                   ))}
@@ -389,13 +405,27 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                       </select>
                     </td>
                     {MONTHS.map(m => (
-                      <td key={m} className="p-2">
-                        <input 
-                          type="number"
-                          className="w-full h-8 text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums"
-                          value={row.monthly_targets[m]}
-                          onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0)}
-                        />
+                      <td key={m} className="p-2 border-x border-zinc-50">
+                        <div className="space-y-1">
+                          <div className="flex flex-col">
+                            <span className="text-[8px] font-black text-zinc-300 uppercase self-start leading-none mb-0.5">Value</span>
+                            <input 
+                              type="number"
+                              className="w-full text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums h-6"
+                              value={row.monthly_targets[m]}
+                              onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0, 'amt')}
+                            />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[8px] font-black text-zinc-300 uppercase self-start leading-none mb-0.5">Qty</span>
+                            <input 
+                              type="number"
+                              className="w-full text-[10px] font-medium text-center border-b border-zinc-50 group-hover:border-zinc-200 bg-transparent focus:border-zinc-400 focus:ring-0 outline-none tabular-nums h-5 italic"
+                              value={row.monthly_units[m]}
+                              onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0, 'unit')}
+                            />
+                          </div>
+                        </div>
                       </td>
                     ))}
                     <td className="p-4 text-center">
