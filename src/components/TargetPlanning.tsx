@@ -32,6 +32,7 @@ interface TargetRow {
 
 export default function TargetPlanning({ user, rows, setRows, filters, setFilters }: TargetPlanningProps) {
   const [employees, setEmployees] = useState<Profile[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [showBulkEntry, setShowBulkEntry] = useState(false);
@@ -47,6 +48,11 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
   const updateFilters = (newFilters: any) => {
     setFilters(newFilters);
   };
+  
+  // Derived state for display rows with search filtering
+  const displayRows = rows.filter(r => 
+    r.customer_name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
   
   // Bulk Entry State
   const [bulkData, setBulkData] = useState({
@@ -80,7 +86,9 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
       if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
       if (currentFilters.year) query = query.eq('year', currentFilters.year);
-      if (currentFilters.employee !== 'All') query = query.eq('salesperson_id', currentFilters.employee);
+      if (currentFilters.employee !== 'All' && currentFilters.employee) {
+        query = query.eq('salesperson_id', currentFilters.employee);
+      }
 
       const { data, error } = await query;
       if (error) throw error;
@@ -108,7 +116,12 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
           groupedRows[key].record_ids[record.month] = record.id;
         });
 
-        setRows(Object.values(groupedRows));
+        // Sort rows by customer name alphabetically
+        const finalRows = Object.values(groupedRows).sort((a: any, b: any) => 
+          a.customer_name.localeCompare(b.customer_name)
+        );
+        
+        setRows(finalRows);
       } else {
         setRows([]);
       }
@@ -124,10 +137,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
   }, [currentFilters.branch]);
 
   useEffect(() => {
-    // If we're coming back to the tab, only fetch if we don't have rows
-    if (rows.length === 0 || !filters) {
-      fetchData();
-    }
+    fetchData();
     // Initialize filters in App.tsx if they don't exist
     if (!filters) {
       setFilters(currentFilters);
@@ -359,12 +369,25 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                     .filter(e => currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch))
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
-                        {emp.full_name} ({emp.role})
+                        {emp.full_name}
                       </option>
                     ))}
                 </select>
               </div>
             )}
+
+            <div className="space-y-1 col-span-2 lg:col-span-1">
+              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Search Customer</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
+                <Input 
+                  placeholder="Filter by customer..."
+                  className="h-10 pl-9 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -388,7 +411,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.map((row, index) => (
+                {displayRows.map((row, index) => (
                   <tr key={row.id} className="hover:bg-zinc-50 transition-colors group">
                     <td className="p-4 text-xs font-black text-zinc-300 sticky left-0 bg-white group-hover:bg-zinc-50 z-10 text-center">{index + 1}</td>
                     <td className="p-4">

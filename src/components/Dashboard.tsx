@@ -90,7 +90,13 @@ export default function Dashboard({ user }: DashboardProps) {
       if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
       if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
       if (filters.year) query = query.eq('year', filters.year);
-      if (filters.employee !== 'All') query = query.eq('salesperson_id', filters.employee);
+      if (filters.month !== 'All') query = query.eq('month', filters.month);
+      
+      // Fixed: Filter by exact salesperson_id (UUID)
+      if (filters.employee !== 'All' && filters.employee) {
+        query = query.eq('salesperson_id', filters.employee);
+      }
+      
       if (filters.customer) query = query.ilike('customer_name', `%${filters.customer}%`);
 
       const { data: salesData, error: salesError } = await query;
@@ -275,7 +281,7 @@ export default function Dashboard({ user }: DashboardProps) {
                     .filter(e => filters.branch === 'All' || e.branch_ids?.includes(filters.branch))
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
-                        {emp.full_name} ({emp.role})
+                        {emp.full_name}
                       </option>
                     ))}
                 </select>

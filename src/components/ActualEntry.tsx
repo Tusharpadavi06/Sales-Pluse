@@ -23,6 +23,7 @@ interface EntryCell {
 
 export default function ActualEntry({ user, entries, setEntries, filters, setFilters }: ActualEntryProps) {
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   
   // Use persistent filters or initialize defaults
   const currentFilters = filters || {
@@ -37,6 +38,10 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   };
   
   const [employees, setEmployees] = useState<Profile[]>([]);
+
+  const displayEntries = entries.filter(e => 
+    e.customer.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const fetchEmployees = async () => {
     try {
@@ -66,7 +71,9 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
       if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
       if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
       if (currentFilters.year) query = query.eq('year', currentFilters.year);
-      if (currentFilters.employee !== 'All') query = query.eq('salesperson_id', currentFilters.employee);
+      if (currentFilters.employee !== 'All' && currentFilters.employee) {
+        query = query.eq('salesperson_id', currentFilters.employee);
+      }
 
       const { data, error } = await query;
       if (error) throw error;
@@ -101,7 +108,9 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
             }
           });
           return row;
-        });
+        }).sort((a: any, b: any) => 
+          a.customer_name.localeCompare(b.customer_name)
+        );
 
         setEntries(finalEntries);
       } else {
@@ -119,10 +128,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   }, [currentFilters.branch]);
 
   useEffect(() => {
-    // If we have entries or filters are already set in App state, only fetch if entries empty
-    if (entries.length === 0 || !filters) {
-      fetchData();
-    }
+    fetchData();
     // Initialize filters in App.tsx if they don't exist
     if (!filters) {
       setFilters(currentFilters);
@@ -267,12 +273,22 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                     .filter(e => currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch))
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
-                        {emp.full_name} ({emp.role})
+                        {emp.full_name}
                       </option>
                     ))}
                 </select>
               </div>
             )}
+
+            <div className="space-y-1 col-span-2 lg:col-span-1">
+              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Search Customer</label>
+              <Input 
+                placeholder="Filter entries..."
+                className="h-10 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -292,7 +308,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-50">
-                {entries.map((entry) => (
+                {displayEntries.map((entry) => (
                   <tr key={entry.id} className="hover:bg-zinc-50/30 transition-colors group">
                     <td className="p-4 sticky left-0 bg-white shadow-[2px_0_10px_-4px_rgba(0,0,0,0.1)] z-10">
                       <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer}</p>
