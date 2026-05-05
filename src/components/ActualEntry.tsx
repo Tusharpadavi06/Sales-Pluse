@@ -1,0 +1,377 @@
+import React, { useState, useEffect } from 'react';
+import { Save, AlertCircle, TrendingUp, Filter } from 'lucide-react';
+import { Card, CardContent, Button, Input } from '@/src/components/ui';
+import { BRANCHES, UNITS, YEARS, MONTHS } from '@/src/constants';
+import { Profile } from '@/src/types';
+import { formatCurrency, cn } from '@/src/lib/utils';
+import { toast } from 'sonner';
+import { supabase } from '@/src/lib/supabase';
+
+interface ActualEntryProps {
+  user: Profile;
+}
+
+interface EntryCell {
+  target: number;
+  actual: number;
+  gap: number;
+}
+
+export default function ActualEntry({ user }: ActualEntryProps) {
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState({
+    branch: user.role === 'Admin' ? 'All' : (user.branch_ids[0] || BRANCHES[0]),
+    unit: 'All',
+    year: YEARS[2], // 2026-2027
+    employee: user.role === 'Sales Person' ? user.id : 'All'
+  });
+  
+  const [entries, setEntries] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<Profile[]>([]);
+
+  const fetchEmployees = async () => {
+    try {
+      let query = supabase
+        .from('profiles')
+        .select('*')
+        .order('full_name');
+      
+      const { data, error } = await query;
+      if (error) throw error;
+      
+      let filtered = data || [];
+      if (filters.branch !== 'All') {
+        filtered = filtered.filter(p => p.branch_ids?.includes(filters.branch));
+      }
+      
+      setEmployees(filtered);
+    } catch (err) {
+      console.error('Error fetching employees:', err);
+    }
+  };
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      let query = supabase.from('Sales_database').select('*');
+      
+      // Role-based filtering
+      if (user.role === 'Sales Person') {
+        query = query.eq('salesperson_id', user.id);
+      } else if (user.role === 'Branch Head') {
+        query = query.in('branch_id', user.branch_ids);
+      }
+
+      if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
+      if (filters.unit !== 'All') query = query.eq('unit_name', filters.unit);
+      if (filters.year) query = query.eq('year', filters.year);
+      if (filters.employee !== 'All') query = query.eq('salesperson_id', filters.employee);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        // Group data by (customer, unit) to recreate the grid rows
+        const groupedRows: Record<string, any> = {};
+        
+        data.forEach(record => {
+          const key = `${record.customer_name}-${record.unit_name}`;
+          if (!groupedRows[key]) {
+            groupedRows[key] = {
+              id: key,
+              customer: record.customer_name,
+              branch: record.branch_id,
+              unit: record.unit_name,
+              monthData: {}
+            };
+          }
+          
+          groupedRows[key].monthData[record.month] = {
+            target: Number(record.target_amount) || 0,
+            actual: Number(record.actual_amount) || 0,
+            gap: Math.max(0, (Number(record.target_amount) || 0) - (Number(record.actual_amount) || 0)),
+            record_id: record.id
+          };
+        });
+
+        // Ensure all months are present in monthData for each row
+        const finalEntries = Object.values(groupedRows).map(row => {
+          MONTHS.forEach(m => {
+            if (!row.monthData[m]) {
+              row.monthData[m] = { target: 0, actual: 0, gap: 0, record_id: null };
+            }
+          });
+          return row;
+        });
+
+        setEntries(finalEntries);
+      } else {
+        setEntries([]);
+      }
+    } catch (error) {
+      console.error('Fetch Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchEmployees();
+  }, [filters.branch]);
+
+  useEffect(() => {
+    fetchData();
+  }, [filters]);
+
+  const updateActual = (rowId: string, month: string, value: number) => {
+    setEntries(prev => prev.map(entry => {
+      if (entry.id === rowId) {
+        const currentData = entry.monthData[month];
+        const newGap = Math.max(0, currentData.target - value);
+        return {
+          ...entry,
+          monthData: {
+            ...entry.monthData,
+            [month]: { ...currentData, actual: value, gap: newGap }
+          }
+        };
+      }
+      return entry;
+    }));
+  };
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      const recordsToUpsert: any[] = [];
+      
+      entries.forEach(entry => {
+        Object.entries(entry.monthData).forEach(([month, data]: [string, any]) => {
+          // If we have a record_id, we update that specific record
+          if (data.record_id) {
+            recordsToUpsert.push({
+              id: data.record_id,
+              actual_amount: data.actual,
+              // We should probably also update gap_value if we want but target - actual is calculated
+            });
+          }
+        });
+      });
+
+      if (recordsToUpsert.length === 0) {
+        toast.info('No values to update');
+        return;
+      }
+
+      // Upserting into Sales_database for actual_amount update
+      // Since 'id' is present, it will update
+      const { error } = await supabase.from('Sales_database').upsert(recordsToUpsert);
+      if (error) throw error;
+
+      toast.success('Actuals committed to Sales Database');
+      fetchData();
+    } catch (error) {
+      console.error('Save Error:', error);
+      toast.error('Failed to commit updates');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const totalPlanned = entries.reduce((acc, e) => {
+    return acc + Object.values(e.monthData).reduce((sum: number, m: any) => sum + m.target, 0);
+  }, 0);
+
+  const aggregateActual = entries.reduce((acc, e) => {
+    return acc + Object.values(e.monthData).reduce((sum: number, m: any) => sum + m.actual, 0);
+  }, 0);
+
+  const totalGap = Math.max(0, totalPlanned - aggregateActual);
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-700">
+      <header className="flex items-center justify-between bg-black text-white p-6 rounded-3xl shadow-xl shadow-black/10">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-white/10 rounded-2xl">
+            <TrendingUp className="h-6 w-6 text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-black italic tracking-tighter">Monthly Pipeline Entry</h2>
+            <p className="text-white/50 text-xs font-bold uppercase tracking-widest">Fiscal Cycle: {filters.year}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button onClick={handleSave} disabled={loading} className="bg-white text-black hover:bg-zinc-200 px-6 h-10 font-black gap-2">
+            <Save className="h-4 w-4" />
+            {loading ? 'COMMITTING...' : 'COMMIT UPDATES'}
+          </Button>
+        </div>
+      </header>
+
+      {/* Master Filters - NEW */}
+      <Card className="rounded-2xl border-none shadow-sm bg-white overflow-hidden border border-zinc-100">
+        <CardContent className="p-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {(user.role === 'Admin' || user.role === 'Branch Head') && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Branch Context</label>
+                <select 
+                  className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                  value={filters.branch}
+                  onChange={e => setFilters({...filters, branch: e.target.value})}
+                  disabled={user.role !== 'Admin'}
+                >
+                  <option value="All">All Branches</option>
+                  {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Unit Type</label>
+              <select 
+                className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                value={filters.unit}
+                onChange={e => setFilters({...filters, unit: e.target.value})}
+              >
+                <option value="All">All Units</option>
+                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Fiscal Year</label>
+              <select 
+                className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                value={filters.year}
+                onChange={e => setFilters({...filters, year: e.target.value})}
+              >
+                {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+
+            {(user.role === 'Admin' || user.role === 'Branch Head') && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Managed Staff</label>
+                <select 
+                  className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                  value={filters.employee}
+                  onChange={e => setFilters({...filters, employee: e.target.value})}
+                >
+                  <option value="All">All Staff</option>
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.full_name} ({emp.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-none shadow-sm overflow-hidden">
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-zinc-50/80 border-b border-zinc-100">
+                  <th className="p-4 text-left text-[10px] font-black uppercase text-zinc-400 tracking-widest sticky left-0 bg-zinc-50 z-10">Entity Context</th>
+                  {MONTHS.map(month => (
+                    <th key={month} className="p-4 text-center text-[10px] font-black uppercase tracking-widest min-w-[220px] text-zinc-400">
+                      {month}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-50">
+                {entries.map((entry) => (
+                  <tr key={entry.id} className="hover:bg-zinc-50/30 transition-colors group">
+                    <td className="p-4 sticky left-0 bg-white shadow-[2px_0_10px_-4px_rgba(0,0,0,0.1)] z-10">
+                      <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer}</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-zinc-400 flex items-center gap-1">
+                          <AlertCircle className="h-2 w-2" /> {entry.unit}
+                        </span>
+                        <span className="text-[10px] font-bold text-zinc-400 italic">@{entry.branch}</span>
+                      </div>
+                    </td>
+                    
+                    {MONTHS.map(month => {
+                      const data = entry.monthData[month] || { target: 0, actual: 0, gap: 0 };
+                      
+                      return (
+                        <td key={month} className="p-4 transition-all">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between px-3 py-2 bg-zinc-100/50 rounded-xl">
+                              <span className="text-[9px] font-black text-zinc-400 uppercase">Target</span>
+                              <span className="text-xs font-black tabular-nums">{formatCurrency(data.target)}</span>
+                            </div>
+                            
+                            <div className="relative group/input">
+                              <label className="absolute -top-2 left-3 px-1 bg-white text-[8px] font-black text-zinc-300 uppercase z-10">Actual</label>
+                              <Input 
+                                type="number"
+                                className="h-11 text-sm font-bold tabular-nums rounded-xl border-zinc-200 transition-all group-hover/input:border-zinc-400"
+                                placeholder="Enter Actual..."
+                                value={data.actual || ''}
+                                onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0)}
+                              />
+                            </div>
+
+                            <div className={cn(
+                              "flex items-center justify-between px-3 py-1.5 rounded-lg border border-dashed",
+                              data.gap > 0 ? "bg-red-50 border-red-100" : "bg-green-50 border-green-100"
+                            )}>
+                              <span className="text-[9px] font-black text-zinc-500 uppercase">GAP</span>
+                              <span className={cn(
+                                "text-[10px] font-black tabular-nums",
+                                data.gap > 0 ? "text-red-500" : "text-green-600"
+                              )}>
+                                {data.gap > 0 ? `+${formatCurrency(data.gap)}` : 'MATCHED'}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+      
+      <Card className="bg-zinc-900 text-white p-6 rounded-3xl border-none">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+          <div className="flex items-center gap-8">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Total Planned</p>
+              <p className="text-2xl font-black italic tracking-tighter tabular-nums">{formatCurrency(totalPlanned)}</p>
+            </div>
+            <div className="h-10 w-[1px] bg-zinc-800" />
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Aggregate Actual</p>
+              <p className="text-2xl font-black italic tracking-tighter tabular-nums">{formatCurrency(aggregateActual)}</p>
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-2 text-right">
+             <p className={cn(
+               "text-[10px] font-black uppercase tracking-widest flex items-center gap-2",
+               totalGap > 0 ? "text-red-500" : "text-green-500"
+             )}>
+               {totalGap > 0 ? <AlertCircle className="h-3 w-3" /> : null} 
+               {totalGap > 0 ? "Critical Pipeline Gap" : "Target Achieved"}
+             </p>
+             <p className={cn(
+               "text-3xl font-black italic tracking-tighter",
+               totalGap > 0 ? "text-red-500" : "text-green-500"
+             )}>{formatCurrency(totalGap)}</p>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}

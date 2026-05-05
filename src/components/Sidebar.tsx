@@ -1,0 +1,92 @@
+import React from 'react';
+import { NavLink } from 'react-router-dom';
+import { 
+  LayoutDashboard, 
+  Target, 
+  FileOutput, 
+  LogOut, 
+  BarChart3,
+  User,
+  Building2
+} from 'lucide-react';
+import { supabase } from '@/src/lib/supabase';
+import { Profile } from '@/src/types';
+import { cn } from '@/src/lib/utils';
+
+interface SidebarProps {
+  user: Profile;
+}
+
+export default function Sidebar({ user }: SidebarProps) {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  const navItems = [
+    { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+    { name: 'Target Planning', path: '/targets', icon: Target },
+    { name: 'Actual Entry', path: '/actuals', icon: FileOutput },
+  ];
+
+  return (
+    <aside className="w-64 bg-white border-r border-zinc-100 flex flex-col h-screen sticky top-0">
+      <div className="p-6 flex items-center gap-3 border-b border-zinc-50">
+        <div className="h-10 w-10 bg-black rounded-xl flex items-center justify-center text-white">
+          <BarChart3 className="h-6 w-6" />
+        </div>
+        <div>
+          <h1 className="font-black text-xl tracking-tighter leading-none italic">SalesPulse</h1>
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Ginza Ltd.</span>
+        </div>
+      </div>
+
+      <nav className="flex-1 p-4 space-y-2 mt-4">
+        {navItems.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            className={({ isActive }) => cn(
+              "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all",
+              isActive 
+                ? "bg-black text-white shadow-lg shadow-black/10" 
+                : "text-zinc-500 hover:bg-zinc-50 hover:text-black"
+            )}
+          >
+            <item.icon className="h-5 w-5" />
+            {item.name}
+          </NavLink>
+        ))}
+      </nav>
+
+      <div className="p-4 mt-auto">
+        <div className="bg-zinc-50 rounded-2xl p-4 mb-4">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-8 w-8 bg-white border border-zinc-200 rounded-full flex items-center justify-center">
+              <User className="h-4 w-4 text-zinc-600" />
+            </div>
+            <div className="overflow-hidden">
+              <p className="text-xs font-black truncate">{user.full_name}</p>
+              <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">{user.role}</p>
+            </div>
+          </div>
+          {user.role !== 'Admin' && (
+            <div className="flex items-start gap-2">
+              <Building2 className="h-3 w-3 text-zinc-400 mt-0.5" />
+              <p className="text-[9px] text-zinc-500 font-medium leading-tight">
+                {user.branch_ids.join(', ')}
+              </p>
+            </div>
+          )}
+        </div>
+        
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs font-black text-red-500 hover:bg-red-50 transition-colors border border-transparent hover:border-red-100"
+        >
+          <LogOut className="h-4 w-4" />
+          LOGOUT SYSTEM
+        </button>
+      </div>
+    </aside>
+  );
+}
