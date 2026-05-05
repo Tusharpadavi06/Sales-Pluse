@@ -203,6 +203,8 @@ export default function Dashboard({ user }: DashboardProps) {
                   placeholder="Search..." 
                   className="h-9 pl-9 text-xs border-zinc-100 bg-zinc-50 rounded-lg"
                   value={filters.customer}
+                  spellCheck={false}
+                  data-gramm="false"
                   onChange={e => setFilters({...filters, customer: e.target.value})}
                 />
               </div>
@@ -316,7 +318,7 @@ export default function Dashboard({ user }: DashboardProps) {
           <CardHeader>
             <CardTitle className="text-sm font-black uppercase tracking-widest text-zinc-400">Unit Wise Target vs Actual</CardTitle>
           </CardHeader>
-          <CardContent className="h-[320px]">
+          <CardContent className="h-[400px] w-full min-h-[400px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData.unitPerformance}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />

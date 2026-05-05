@@ -9,6 +9,10 @@ import { supabase } from '@/src/lib/supabase';
 
 interface ActualEntryProps {
   user: Profile;
+  entries: any[];
+  setEntries: React.Dispatch<React.SetStateAction<any[]>>;
+  filters: any;
+  setFilters: React.Dispatch<React.SetStateAction<any>>;
 }
 
 interface EntryCell {
@@ -17,16 +21,21 @@ interface EntryCell {
   gap: number;
 }
 
-export default function ActualEntry({ user }: ActualEntryProps) {
+export default function ActualEntry({ user, entries, setEntries, filters, setFilters }: ActualEntryProps) {
   const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({
+  
+  // Use persistent filters or initialize defaults
+  const currentFilters = filters || {
     branch: user.role === 'Admin' ? 'All' : (user.branch_ids[0] || BRANCHES[0]),
     unit: 'All',
     year: YEARS[2], // 2026-2027
     employee: user.role === 'Sales Person' ? user.id : 'All'
-  });
+  };
+
+  const updateFilters = (newFilters: any) => {
+    setFilters(newFilters);
+  };
   
-  const [entries, setEntries] = useState<any[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
 
   const fetchEmployees = async () => {
@@ -54,10 +63,10 @@ export default function ActualEntry({ user }: ActualEntryProps) {
         query = query.in('branch_id', user.branch_ids);
       }
 
-      if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
-      if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
-      if (filters.year) query = query.eq('year', filters.year);
-      if (filters.employee !== 'All') query = query.eq('salesperson_id', filters.employee);
+      if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
+      if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
+      if (currentFilters.year) query = query.eq('year', currentFilters.year);
+      if (currentFilters.employee !== 'All') query = query.eq('salesperson_id', currentFilters.employee);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -109,10 +118,17 @@ export default function ActualEntry({ user }: ActualEntryProps) {
 
   useEffect(() => {
     fetchEmployees();
-  }, [filters.branch]);
+  }, [currentFilters.branch]);
 
   useEffect(() => {
-    fetchData();
+    // If we have entries or filters are already set in App state, only fetch if entries empty
+    if (entries.length === 0 || !filters) {
+      fetchData();
+    }
+    // Initialize filters in App.tsx if they don't exist
+    if (!filters) {
+      setFilters(currentFilters);
+    }
   }, [filters]);
 
   const updateActual = (rowId: string, month: string, value: number, field: 'amt' | 'qty') => {
@@ -149,10 +165,10 @@ export default function ActualEntry({ user }: ActualEntryProps) {
       
       entries.forEach(entry => {
         Object.entries(entry.monthData).forEach(([month, data]: [string, any]) => {
-          // If we have a record_id, we update that specific record
-          if (data.record_id) {
+          const existingId = data.record_id;
+          if (existingId && existingId !== 'null' && existingId !== 'undefined' && String(existingId).length > 5) {
             recordsToUpsert.push({
-              id: data.record_id,
+              id: existingId,
               actual_amount: data.actual,
               actual_unit: data.actual_qty,
             });
@@ -166,8 +182,7 @@ export default function ActualEntry({ user }: ActualEntryProps) {
       }
 
       // Upserting into Sales_database for actual_amount update
-      // Since 'id' is present, it will update
-      const { error } = await supabase.from('Sales_database').upsert(recordsToUpsert);
+      const { error } = await supabase.from('Sales_database').upsert(recordsToUpsert, { onConflict: 'id' });
       if (error) throw error;
 
       toast.success('Actuals committed to Sales Database');
@@ -199,7 +214,7 @@ export default function ActualEntry({ user }: ActualEntryProps) {
           </div>
           <div>
             <h2 className="text-2xl font-black italic tracking-tighter">Monthly Pipeline Entry</h2>
-            <p className="text-white/50 text-xs font-bold uppercase tracking-widest">Fiscal Cycle: {filters.year}</p>
+            <p className="text-white/50 text-xs font-bold uppercase tracking-widest">Fiscal Cycle: {currentFilters.year}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -219,8 +234,8 @@ export default function ActualEntry({ user }: ActualEntryProps) {
                 <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Branch Context</label>
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                  value={filters.branch}
-                  onChange={e => setFilters({...filters, branch: e.target.value, employee: 'All'})}
+                  value={currentFilters.branch}
+                  onChange={e => updateFilters({...currentFilters, branch: e.target.value, employee: 'All'})}
                   disabled={user.role !== 'Admin'}
                 >
                   <option value="All">All Branches</option>
@@ -233,8 +248,8 @@ export default function ActualEntry({ user }: ActualEntryProps) {
               <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Unit Type</label>
               <select 
                 className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                value={filters.unit}
-                onChange={e => setFilters({...filters, unit: e.target.value})}
+                value={currentFilters.unit}
+                onChange={e => updateFilters({...currentFilters, unit: e.target.value})}
               >
                 <option value="All">All Units</option>
                 {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
@@ -245,8 +260,8 @@ export default function ActualEntry({ user }: ActualEntryProps) {
               <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Fiscal Year</label>
               <select 
                 className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                value={filters.year}
-                onChange={e => setFilters({...filters, year: e.target.value})}
+                value={currentFilters.year}
+                onChange={e => updateFilters({...currentFilters, year: e.target.value})}
               >
                 {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
@@ -257,12 +272,12 @@ export default function ActualEntry({ user }: ActualEntryProps) {
                 <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Managed Staff</label>
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                  value={filters.employee}
-                  onChange={e => setFilters({...filters, employee: e.target.value})}
+                  value={currentFilters.employee}
+                  onChange={e => updateFilters({...currentFilters, employee: e.target.value})}
                 >
                   <option value="All">All Staff</option>
                   {employees
-                    .filter(e => filters.branch === 'All' || e.branch_ids?.includes(filters.branch))
+                    .filter(e => currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch))
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
                         {emp.full_name} ({emp.role})
@@ -326,6 +341,8 @@ export default function ActualEntry({ user }: ActualEntryProps) {
                                   className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
                                   placeholder="Qty"
                                   value={data.actual_qty || ''}
+                                  spellCheck={false}
+                                  data-gramm="false"
                                   onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0, 'qty')}
                                 />
                               </div>
@@ -336,6 +353,8 @@ export default function ActualEntry({ user }: ActualEntryProps) {
                                   className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
                                   placeholder="Amt"
                                   value={data.actual || ''}
+                                  spellCheck={false}
+                                  data-gramm="false"
                                   onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0, 'amt')}
                                 />
                               </div>

@@ -9,6 +9,10 @@ import { supabase } from '@/src/lib/supabase';
 
 interface TargetPlanningProps {
   user: Profile;
+  rows: TargetRow[];
+  setRows: React.Dispatch<React.SetStateAction<TargetRow[]>>;
+  filters: any;
+  setFilters: React.Dispatch<React.SetStateAction<any>>;
 }
 
 interface MonthlyTarget {
@@ -27,18 +31,23 @@ interface TargetRow {
   salesperson_id: string;
 }
 
-export default function TargetPlanning({ user }: TargetPlanningProps) {
-  const [rows, setRows] = useState<TargetRow[]>([]);
+export default function TargetPlanning({ user, rows, setRows, filters, setFilters }: TargetPlanningProps) {
   const [employees, setEmployees] = useState<Profile[]>([]);
   
   const [loading, setLoading] = useState(false);
   const [showBulkEntry, setShowBulkEntry] = useState(false);
-  const [filters, setFilters] = useState({
+  
+  // Use persistent filters or initialize defaults
+  const currentFilters = filters || {
     branch: user.role === 'Admin' ? 'All' : (user.branch_ids[0] || BRANCHES[0]),
     unit: 'All',
     year: YEARS[2], // 2026-2027
     employee: user.role === 'Sales Person' ? user.id : 'All'
-  });
+  };
+
+  const updateFilters = (newFilters: any) => {
+    setFilters(newFilters);
+  };
   
   // Bulk Entry State
   const [bulkData, setBulkData] = useState({
@@ -63,16 +72,16 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
   };
 
   const fetchData = async () => {
-    if (!filters.year) return;
+    if (!currentFilters.year) return;
     setLoading(true);
     try {
       let query = supabase.from('Sales_database').select('*');
       
       // Filter based on currently active viewing filters
-      if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
-      if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
-      if (filters.year) query = query.eq('year', filters.year);
-      if (filters.employee !== 'All') query = query.eq('salesperson_id', filters.employee);
+      if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
+      if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
+      if (currentFilters.year) query = query.eq('year', currentFilters.year);
+      if (currentFilters.employee !== 'All') query = query.eq('salesperson_id', currentFilters.employee);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -115,27 +124,30 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
 
   useEffect(() => {
     fetchEmployees();
-    // If specific branch is chosen, and current employee filter is not in that branch, reset it
-    if (filters.branch !== 'All' && filters.employee !== 'All') {
-      // Logic handled by fetchEmployees being triggered and user selection
-    }
-  }, [filters.branch]);
+  }, [currentFilters.branch]);
 
   useEffect(() => {
-    fetchData();
-  }, [filters]);
+    // If we're coming back to the tab, only fetch if we don't have rows
+    if (rows.length === 0 || !filters) {
+      fetchData();
+    }
+    // Initialize filters in App.tsx if they don't exist
+    if (!filters) {
+      setFilters(currentFilters);
+    }
+  }, [filters]); 
 
   const addRow = () => {
     setRows([...rows, { 
       id: Math.random().toString(36).substr(2, 9),
       customer_name: '', 
-      branch: filters.branch === 'All' ? (user.branch_ids[0] || BRANCHES[0]) : filters.branch, 
-      unit: filters.unit === 'All' ? UNITS[0] : filters.unit, 
-      year: filters.year,
+      branch: currentFilters.branch === 'All' ? (user.branch_ids[0] || BRANCHES[0]) : currentFilters.branch, 
+      unit: currentFilters.unit === 'All' ? UNITS[0] : currentFilters.unit, 
+      year: currentFilters.year,
       monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
       monthly_units: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
       record_ids: {},
-      salesperson_id: filters.employee === 'All' ? user.id : filters.employee
+      salesperson_id: currentFilters.employee === 'All' ? user.id : currentFilters.employee
     }]);
   };
 
@@ -187,34 +199,43 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
         MONTHS.forEach(m => {
           const val = r.monthly_targets[m];
           const unitCount = r.monthly_units[m];
+          
           const payload: any = {
             customer_name: r.customer_name,
             Unit_name: r.unit,
             month: m,
-            year: r.year || filters.year,
+            year: r.year || currentFilters.year,
             target_amount: val,
             target_unit: unitCount,
             branch_id: r.branch,
             salesperson_id: r.salesperson_id
           };
           
-          if (r.record_ids?.[m]) {
-            payload.id = r.record_ids[m];
+          const existingId = r.record_ids?.[m];
+          if (existingId && existingId !== 'null' && existingId !== 'undefined' && String(existingId).length > 5) {
+            payload.id = existingId;
           }
           
-          // Only push if there is actual target value or we are specifically zeroing an existing record
-          if (val > 0 || payload.id) {
+          // Only push if there is actual target value or we are specifically updating an existing record
+          if (val > 0 || unitCount > 0 || (payload.id)) {
             recordsToUpsert.push(payload);
           }
         });
       });
 
       if (recordsToUpsert.length > 0) {
-        const { error } = await supabase.from('Sales_database').upsert(recordsToUpsert);
-        if (error) {
-          console.error('Supabase Error:', error);
-          toast.error(`Database Error: ${error.message}`);
-          throw error;
+        // Separate inserts and updates to avoid "null value in column id" errors with mixed upserts
+        const inserts = recordsToUpsert.filter(r => !r.id);
+        const updates = recordsToUpsert.filter(r => r.id);
+
+        if (inserts.length > 0) {
+          const { error: insError } = await supabase.from('Sales_database').insert(inserts);
+          if (insError) throw insError;
+        }
+        
+        if (updates.length > 0) {
+          const { error: upsError } = await supabase.from('Sales_database').upsert(updates, { onConflict: 'id' });
+          if (upsError) throw upsError;
         }
       }
 
@@ -244,7 +265,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
           customer_name: bulkData.customer,
           branch: bulkData.targetBranch,
           unit: unit,
-          year: filters.year,
+          year: currentFilters.year,
           monthly_targets: MONTHS.reduce((acc, m) => ({
             ...acc,
             [m]: bulkData.selectedMonths.includes(m) ? value : 0
@@ -274,7 +295,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
       targetBranch: user.role === 'Admin' ? BRANCHES[0] : (user.branch_ids[0] || BRANCHES[0]),
       targetSalesperson: user.id
     });
-    toast.success(`${newRows.length} units added for ${bulkData.customer}`);
+    toast.success(`${newRows.length} units added for ${bulkData.customer}. Click "SAVE CHANGES" to finalize.`);
   };
 
   return (
@@ -282,7 +303,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
       <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <h2 className="text-3xl font-black italic tracking-tighter">Target Planning</h2>
-          <p className="text-zinc-400 text-sm font-bold uppercase tracking-widest">Master Grid Entry - FY {filters.year}</p>
+          <p className="text-zinc-400 text-sm font-bold uppercase tracking-widest">Master Grid Entry - FY {currentFilters.year}</p>
         </div>
         <div className="flex gap-2">
           <Button 
@@ -309,8 +330,8 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                 <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Branch Context</label>
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                  value={filters.branch}
-                  onChange={e => setFilters({...filters, branch: e.target.value, employee: 'All'})}
+                  value={currentFilters.branch}
+                  onChange={e => updateFilters({...currentFilters, branch: e.target.value, employee: 'All'})}
                   disabled={user.role !== 'Admin'}
                 >
                   <option value="All">All Branches</option>
@@ -323,8 +344,8 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
               <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Unit Type</label>
               <select 
                 className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                value={filters.unit}
-                onChange={e => setFilters({...filters, unit: e.target.value})}
+                value={currentFilters.unit}
+                onChange={e => updateFilters({...currentFilters, unit: e.target.value})}
               >
                 <option value="All">All Units</option>
                 {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
@@ -335,8 +356,8 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
               <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Fiscal Year</label>
               <select 
                 className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                value={filters.year}
-                onChange={e => setFilters({...filters, year: e.target.value})}
+                value={currentFilters.year}
+                onChange={e => updateFilters({...currentFilters, year: e.target.value})}
               >
                 {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
@@ -347,12 +368,12 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                 <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Managed Staff</label>
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
-                  value={filters.employee}
-                  onChange={e => setFilters({...filters, employee: e.target.value})}
+                  value={currentFilters.employee}
+                  onChange={e => updateFilters({...currentFilters, employee: e.target.value})}
                 >
                   <option value="All">All Staff</option>
                   {employees
-                    .filter(e => filters.branch === 'All' || e.branch_ids?.includes(filters.branch))
+                    .filter(e => currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch))
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
                         {emp.full_name} ({emp.role})
@@ -392,6 +413,8 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                         placeholder="Customer..." 
                         className="h-9 text-xs font-black border-none bg-zinc-50/50 rounded-lg px-2 focus-visible:ring-1 focus-visible:ring-black"
                         value={row.customer_name}
+                        spellCheck={false}
+                        data-gramm="false"
                         onChange={e => updateRowField(row.id, 'customer_name', e.target.value)}
                       />
                     </td>
@@ -413,6 +436,8 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                               type="number"
                               className="w-full text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums h-6"
                               value={row.monthly_targets[m]}
+                              spellCheck={false}
+                              data-gramm="false"
                               onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0, 'amt')}
                             />
                           </div>
@@ -422,6 +447,8 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                               type="number"
                               className="w-full text-[10px] font-medium text-center border-b border-zinc-50 group-hover:border-zinc-200 bg-transparent focus:border-zinc-400 focus:ring-0 outline-none tabular-nums h-5 italic"
                               value={row.monthly_units[m]}
+                              spellCheck={false}
+                              data-gramm="false"
                               onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0, 'unit')}
                             />
                           </div>
@@ -458,7 +485,7 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
             <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
               <div>
                 <h3 className="text-2xl font-black italic tracking-tighter">Bulk Target Setup</h3>
-                <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Fiscal Year: {filters.year}</p>
+                <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Fiscal Year: {currentFilters.year}</p>
               </div>
               <button onClick={() => setShowBulkEntry(false)} className="h-10 w-10 flex items-center justify-center rounded-full hover:bg-zinc-200 transition-colors">
                 <X className="h-5 w-5" />
@@ -505,6 +532,8 @@ export default function TargetPlanning({ user }: TargetPlanningProps) {
                     placeholder="ENTER CUSTOMER..." 
                     className="h-14 text-lg font-black border-zinc-200 rounded-2xl focus:ring-black"
                     value={bulkData.customer}
+                    spellCheck={false}
+                    data-gramm="false"
                     onChange={e => setBulkData({...bulkData, customer: e.target.value})}
                   />
                 </div>

@@ -19,6 +19,12 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Persistent States for Tabs
+  const [targetRows, setTargetRows] = useState<any[]>([]);
+  const [targetFilters, setTargetFilters] = useState<any>(null);
+  const [actualEntries, setActualEntries] = useState<any[]>([]);
+  const [actualFilters, setActualFilters] = useState<any>(null);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -86,8 +92,30 @@ export default function App() {
         <main className="flex-1 p-8 max-w-7xl mx-auto w-full">
           <Routes>
             <Route path="/" element={<Dashboard user={profile} />} />
-            <Route path="/targets" element={<TargetPlanning user={profile} />} />
-            <Route path="/actuals" element={<ActualEntry user={profile} />} />
+            <Route 
+              path="/targets" 
+              element={
+                <TargetPlanning 
+                  user={profile} 
+                  rows={targetRows} 
+                  setRows={setTargetRows} 
+                  filters={targetFilters}
+                  setFilters={setTargetFilters}
+                />
+              } 
+            />
+            <Route 
+              path="/actuals" 
+              element={
+                <ActualEntry 
+                  user={profile} 
+                  entries={actualEntries} 
+                  setEntries={setActualEntries} 
+                  filters={actualFilters}
+                  setFilters={setActualFilters}
+                />
+              } 
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
