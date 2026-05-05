@@ -26,7 +26,6 @@ interface TargetRow {
   unit: string;
   year: string;
   monthly_targets: MonthlyTarget;
-  monthly_units: MonthlyTarget;
   record_ids?: Record<string, string>;
   salesperson_id: string;
 }
@@ -100,13 +99,11 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               unit: record.Unit_name,
               year: record.year,
               monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
-              monthly_units: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
               record_ids: {},
               salesperson_id: record.salesperson_id
             };
           }
           groupedRows[key].monthly_targets[record.month] = Number(record.target_amount) || 0;
-          groupedRows[key].monthly_units[record.month] = Number(record.target_unit) || 0;
           if (!groupedRows[key].record_ids) groupedRows[key].record_ids = {};
           groupedRows[key].record_ids[record.month] = record.id;
         });
@@ -145,7 +142,6 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       unit: currentFilters.unit === 'All' ? UNITS[0] : currentFilters.unit, 
       year: currentFilters.year,
       monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
-      monthly_units: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
       record_ids: {},
       salesperson_id: currentFilters.employee === 'All' ? user.id : currentFilters.employee
     }]);
@@ -169,20 +165,13 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     setRows(rows.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
 
-  const updateMonthlyValue = (rowId: string, month: string, value: number, field: 'amt' | 'unit') => {
+  const updateMonthlyValue = (rowId: string, month: string, value: number) => {
     setRows(rows.map(r => {
       if (r.id === rowId) {
-        if (field === 'amt') {
-          return {
-            ...r,
-            monthly_targets: { ...r.monthly_targets, [month]: value }
-          };
-        } else {
-          return {
-            ...r,
-            monthly_units: { ...r.monthly_units, [month]: value }
-          };
-        }
+        return {
+          ...r,
+          monthly_targets: { ...r.monthly_targets, [month]: value }
+        };
       }
       return r;
     }));
@@ -198,7 +187,6 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         r.customer_name = r.customer_name.trim();
         MONTHS.forEach(m => {
           const val = r.monthly_targets[m];
-          const unitCount = r.monthly_units[m];
           
           const payload: any = {
             customer_name: r.customer_name,
@@ -206,7 +194,6 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
             month: m,
             year: r.year || currentFilters.year,
             target_amount: val,
-            target_unit: unitCount,
             branch_id: r.branch,
             salesperson_id: r.salesperson_id
           };
@@ -217,7 +204,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
           }
           
           // Only push if there is actual target value or we are specifically updating an existing record
-          if (val > 0 || unitCount > 0 || (payload.id)) {
+          if (val > 0 || (payload.id)) {
             recordsToUpsert.push(payload);
           }
         });
@@ -269,10 +256,6 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
           monthly_targets: MONTHS.reduce((acc, m) => ({
             ...acc,
             [m]: bulkData.selectedMonths.includes(m) ? value : 0
-          }), {}),
-          monthly_units: MONTHS.reduce((acc, m) => ({
-            ...acc,
-            [m]: 0 
           }), {}),
           record_ids: {},
           salesperson_id: bulkData.targetSalesperson
@@ -429,29 +412,16 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                     </td>
                     {MONTHS.map(m => (
                       <td key={m} className="p-2 border-x border-zinc-50">
-                        <div className="space-y-1">
-                          <div className="flex flex-col">
-                            <span className="text-[8px] font-black text-zinc-300 uppercase self-start leading-none mb-0.5">Value</span>
-                            <input 
-                              type="number"
-                              className="w-full text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums h-6"
-                              value={row.monthly_targets[m]}
-                              spellCheck={false}
-                              data-gramm="false"
-                              onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0, 'amt')}
-                            />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[8px] font-black text-zinc-300 uppercase self-start leading-none mb-0.5">Qty</span>
-                            <input 
-                              type="number"
-                              className="w-full text-[10px] font-medium text-center border-b border-zinc-50 group-hover:border-zinc-200 bg-transparent focus:border-zinc-400 focus:ring-0 outline-none tabular-nums h-5 italic"
-                              value={row.monthly_units[m]}
-                              spellCheck={false}
-                              data-gramm="false"
-                              onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0, 'unit')}
-                            />
-                          </div>
+                        <div className="flex flex-col">
+                          <span className="text-[8px] font-black text-zinc-300 uppercase self-start leading-none mb-0.5">Value</span>
+                          <input 
+                            type="number"
+                            className="w-full text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums h-6"
+                            value={row.monthly_targets[m]}
+                            spellCheck={false}
+                            data-gramm="false"
+                            onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0)}
+                          />
                         </div>
                       </td>
                     ))}

@@ -89,8 +89,6 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           groupedRows[key].monthData[record.month] = {
             target: Number(record.target_amount) || 0,
             actual: Number(record.actual_amount) || 0,
-            target_qty: Number(record.target_unit) || 0,
-            actual_qty: Number(record.actual_unit) || 0,
             gap: Math.max(0, (Number(record.target_amount) || 0) - (Number(record.actual_amount) || 0)),
             record_id: record.id
           };
@@ -99,7 +97,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
         const finalEntries = Object.values(groupedRows).map(row => {
           MONTHS.forEach(m => {
             if (!row.monthData[m]) {
-              row.monthData[m] = { target: 0, actual: 0, target_qty: 0, actual_qty: 0, gap: 0, record_id: null };
+              row.monthData[m] = { target: 0, actual: 0, gap: 0, record_id: null };
             }
           });
           return row;
@@ -131,28 +129,18 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
     }
   }, [filters]);
 
-  const updateActual = (rowId: string, month: string, value: number, field: 'amt' | 'qty') => {
+  const updateActual = (rowId: string, month: string, value: number) => {
     setEntries(prev => prev.map(entry => {
       if (entry.id === rowId) {
         const currentData = entry.monthData[month];
-        if (field === 'amt') {
-          const newGap = Math.max(0, currentData.target - value);
-          return {
-            ...entry,
-            monthData: {
-              ...entry.monthData,
-              [month]: { ...currentData, actual: value, gap: newGap }
-            }
-          };
-        } else {
-          return {
-            ...entry,
-            monthData: {
-              ...entry.monthData,
-              [month]: { ...currentData, actual_qty: value }
-            }
-          };
-        }
+        const newGap = Math.max(0, currentData.target - value);
+        return {
+          ...entry,
+          monthData: {
+            ...entry.monthData,
+            [month]: { ...currentData, actual: value, gap: newGap }
+          }
+        };
       }
       return entry;
     }));
@@ -170,7 +158,6 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
             recordsToUpsert.push({
               id: existingId,
               actual_amount: data.actual,
-              actual_unit: data.actual_qty,
             });
           }
         });
@@ -321,43 +308,24 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                       const data = entry.monthData[month] || { target: 0, actual: 0, gap: 0 };
                       
                       return (
-                        <td key={month} className="p-4 transition-all">
+                        <td key={month} className="p-4 transition-all border-x border-zinc-50">
                           <div className="space-y-3">
-                            <div className="flex items-center justify-between px-3 py-1 bg-zinc-100/50 rounded-lg">
-                              <span className="text-[8px] font-black text-zinc-400 uppercase">Target Qty</span>
-                              <span className="text-[10px] font-black tabular-nums">{data.target_qty}</span>
-                            </div>
-                            
                             <div className="flex items-center justify-between px-3 py-1 bg-zinc-100/50 rounded-lg">
                               <span className="text-[8px] font-black text-zinc-400 uppercase">Target Value</span>
                               <span className="text-[10px] font-black tabular-nums">{formatCurrency(data.target)}</span>
                             </div>
                             
-                            <div className="grid grid-cols-2 gap-2">
-                              <div className="relative group/input">
-                                <label className="absolute -top-2 left-2 px-1 bg-white text-[7px] font-black text-zinc-300 uppercase z-10">Actual Qty</label>
-                                <Input 
-                                  type="number"
-                                  className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
-                                  placeholder="Qty"
-                                  value={data.actual_qty || ''}
-                                  spellCheck={false}
-                                  data-gramm="false"
-                                  onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0, 'qty')}
-                                />
-                              </div>
-                              <div className="relative group/input">
-                                <label className="absolute -top-2 left-2 px-1 bg-white text-[7px] font-black text-zinc-300 uppercase z-10">Actual Amt</label>
-                                <Input 
-                                  type="number"
-                                  className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
-                                  placeholder="Amt"
-                                  value={data.actual || ''}
-                                  spellCheck={false}
-                                  data-gramm="false"
-                                  onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0, 'amt')}
-                                />
-                              </div>
+                            <div className="relative group/input">
+                              <label className="absolute -top-2 left-2 px-1 bg-white text-[7px] font-black text-zinc-300 uppercase z-10">Actual Amount</label>
+                              <Input 
+                                type="number"
+                                className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
+                                placeholder={formatCurrency(data.target)}
+                                value={data.actual || ''}
+                                spellCheck={false}
+                                data-gramm="false"
+                                onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0)}
+                              />
                             </div>
 
                             <div className={cn(
