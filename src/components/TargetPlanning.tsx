@@ -83,6 +83,12 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       let query = supabase.from('Sales_database').select('*');
       
       // Filter based on currently active viewing filters
+      if (user.role === 'Sales Person') {
+        query = query.eq('salesperson_id', user.id);
+      } else if (user.role === 'Branch Head') {
+        query = query.in('branch_id', user.branch_ids);
+      }
+
       if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
       if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
       if (currentFilters.year) query = query.eq('year', currentFilters.year);
@@ -118,7 +124,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
 
         // Sort rows by customer name alphabetically
         const finalRows = Object.values(groupedRows).sort((a: any, b: any) => 
-          a.customer_name.localeCompare(b.customer_name)
+          (a.customer_name || '').localeCompare(b.customer_name || '')
         );
         
         setRows(finalRows);

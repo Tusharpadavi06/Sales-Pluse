@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, AlertCircle, TrendingUp, Filter } from 'lucide-react';
+import { Save, AlertCircle, TrendingUp, Filter, Search } from 'lucide-react';
 import { Card, CardContent, Button, Input } from '@/src/components/ui';
 import { BRANCHES, UNITS, YEARS, MONTHS } from '@/src/constants';
 import { Profile } from '@/src/types';
@@ -40,7 +40,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   const [employees, setEmployees] = useState<Profile[]>([]);
 
   const displayEntries = entries.filter(e => 
-    e.customer.toLowerCase().includes(searchTerm.toLowerCase())
+    e.customer_name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const fetchEmployees = async () => {
@@ -86,7 +86,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           if (!groupedRows[key]) {
             groupedRows[key] = {
               id: key,
-              customer: record.customer_name,
+              customer_name: record.customer_name,
               branch: record.branch_id,
               unit: record.Unit_name,
               monthData: {}
@@ -109,7 +109,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           });
           return row;
         }).sort((a: any, b: any) => 
-          a.customer_name.localeCompare(b.customer_name)
+          (a.customer_name || '').localeCompare(b.customer_name || '')
         );
 
         setEntries(finalEntries);
@@ -282,12 +282,15 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
 
             <div className="space-y-1 col-span-2 lg:col-span-1">
               <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Search Customer</label>
-              <Input 
-                placeholder="Filter entries..."
-                className="h-10 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-              />
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
+                <Input 
+                  placeholder="Filter entries..."
+                  className="h-10 pl-9 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
             </div>
           </div>
         </CardContent>
@@ -311,7 +314,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                 {displayEntries.map((entry) => (
                   <tr key={entry.id} className="hover:bg-zinc-50/30 transition-colors group">
                     <td className="p-4 sticky left-0 bg-white shadow-[2px_0_10px_-4px_rgba(0,0,0,0.1)] z-10">
-                      <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer}</p>
+                      <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer_name}</p>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-zinc-400 flex items-center gap-1">
                           <AlertCircle className="h-2 w-2" /> {entry.unit}
