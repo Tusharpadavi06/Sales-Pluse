@@ -71,8 +71,16 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
       if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
       if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
       if (currentFilters.year) query = query.eq('year', currentFilters.year);
+      
       if (currentFilters.employee !== 'All' && currentFilters.employee) {
-        query = query.eq('salesperson_id', currentFilters.employee);
+        const selectedEmp = employees.find(e => e.id === currentFilters.employee);
+        if (selectedEmp) {
+          // If we have the employee object, search for both their ID and their full name (for legacy support)
+          query = query.in('salesperson_id', [selectedEmp.id, selectedEmp.full_name]);
+        } else {
+          // If not found yet (maybe still loading), just use the ID
+          query = query.eq('salesperson_id', currentFilters.employee);
+        }
       }
 
       const { data, error } = await query;
@@ -82,13 +90,18 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
         const groupedRows: Record<string, any> = {};
         
         data.forEach(record => {
-          const key = `${record.customer_name}-${record.Unit_name}-${record.salesperson_id}`;
+          let sid = record.salesperson_id;
+          const matchingEmp = employees.find(e => e.id === sid || e.full_name === sid);
+          if (matchingEmp) sid = matchingEmp.id;
+
+          const key = `${record.customer_name}-${record.Unit_name}-${sid}`;
           if (!groupedRows[key]) {
             groupedRows[key] = {
               id: key,
               customer_name: record.customer_name,
               branch: record.branch_id,
               unit: record.Unit_name,
+              salesperson_id: sid,
               monthData: {}
             };
           }
@@ -229,10 +242,12 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.branch}
                   onChange={e => updateFilters({...currentFilters, branch: e.target.value, employee: 'All'})}
-                  disabled={user.role !== 'Admin'}
                 >
-                  <option value="All">All Branches</option>
-                  {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                  {user.role === 'Admin' && <option value="All">All Branches</option>}
+                  {user.role === 'Branch Head' && user.branch_ids?.length > 1 && <option value="All">All My Branches</option>}
+                  {BRANCHES
+                    .filter(b => user.role === 'Admin' || user.branch_ids?.includes(b))
+                    .map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
             )}
@@ -270,7 +285,18 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                 >
                   <option value="All">All Staff</option>
                   {employees
-                    .filter(e => currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch))
+                    .filter(e => {
+                      // Admin sees everyone
+                      if (user.role === 'Admin') {
+                        return currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch);
+                      }
+                      // Branch Head sees only their staff
+                      const isMyStaff = e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
+                      if (currentFilters.branch === 'All') {
+                        return isMyStaff;
+                      }
+                      return isMyStaff && e.branch_ids?.includes(currentFilters.branch);
+                    })
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
                         {emp.full_name}
@@ -315,11 +341,14 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                   <tr key={entry.id} className="hover:bg-zinc-50/30 transition-colors group">
                     <td className="p-4 sticky left-0 bg-white shadow-[2px_0_10px_-4px_rgba(0,0,0,0.1)] z-10">
                       <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer_name}</p>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[10px] font-bold text-zinc-400 flex items-center gap-1">
                           <AlertCircle className="h-2 w-2" /> {entry.unit}
                         </span>
-                        <span className="text-[10px] font-bold text-zinc-400 italic">@{entry.branch}</span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded uppercase">
+                          {employees.find(e => e.id === entry.salesperson_id || e.full_name === entry.salesperson_id)?.full_name || entry.salesperson_id || 'Unassigned'}
+                        </span>
+                        <span className="text-[10px] font-bold text-zinc-300 italic">@{entry.branch}</span>
                       </div>
                     </td>
                     

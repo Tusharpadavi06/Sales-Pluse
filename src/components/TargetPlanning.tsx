@@ -59,9 +59,18 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     customer: '',
     selectedMonths: [] as string[],
     unitValues: UNITS.reduce((acc, u) => ({ ...acc, [u]: 0 }), {}) as Record<string, number>,
-    targetBranch: user.role === 'Admin' ? BRANCHES[0] : (user.branch_ids[0] || BRANCHES[0]),
-    targetSalesperson: user.id
+    targetBranch: user.role === 'Admin' ? 'All' : (user.branch_ids[0] || BRANCHES[0]),
+    targetSalesperson: 'All'
   });
+
+  // Sync bulk salesperson with filter if it changes
+  useEffect(() => {
+    setBulkData(prev => ({
+      ...prev,
+      targetSalesperson: currentFilters.employee,
+      targetBranch: currentFilters.branch
+    }));
+  }, [currentFilters.employee, currentFilters.branch, showBulkEntry]);
 
   const fetchEmployees = async () => {
     try {
@@ -92,8 +101,16 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
       if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
       if (currentFilters.year) query = query.eq('year', currentFilters.year);
+      
       if (currentFilters.employee !== 'All' && currentFilters.employee) {
-        query = query.eq('salesperson_id', currentFilters.employee);
+        const selectedEmp = employees.find(e => e.id === currentFilters.employee);
+        if (selectedEmp) {
+          // If we have the employee object, search for both their ID and their full name (for legacy support)
+          query = query.in('salesperson_id', [selectedEmp.id, selectedEmp.full_name]);
+        } else {
+          // If not found yet (maybe still loading), just use the ID
+          query = query.eq('salesperson_id', currentFilters.employee);
+        }
       }
 
       const { data, error } = await query;
@@ -103,8 +120,13 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         const groupedRows: Record<string, TargetRow> = {};
         
         data.forEach(record => {
+          // Normalize legacy name records to actual UUIDs if possible for UI dropdown compatibility
+          let sid = record.salesperson_id;
+          const matchingEmp = employees.find(e => e.id === sid || e.full_name === sid);
+          if (matchingEmp) sid = matchingEmp.id;
+
           // Key by customer, unit, and salesperson to ensure distinct rows for different assignments
-          const key = `${record.customer_name}-${record.Unit_name}-${record.salesperson_id}`;
+          const key = `${record.customer_name}-${record.Unit_name}-${sid}`;
           if (!groupedRows[key]) {
             groupedRows[key] = {
               id: key,
@@ -114,7 +136,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               year: record.year,
               monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
               record_ids: {},
-              salesperson_id: record.salesperson_id
+              salesperson_id: sid
             };
           }
           groupedRows[key].monthly_targets[record.month] = Number(record.target_amount) || 0;
@@ -258,6 +280,11 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       return;
     }
 
+    if (bulkData.targetBranch === 'All') {
+      toast.error('Please select a specific branch for bulk entry');
+      return;
+    }
+
     const newRows: TargetRow[] = [];
     
     Object.entries(bulkData.unitValues).forEach(([unit, val]) => {
@@ -282,6 +309,11 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
 
     if (newRows.length === 0) {
       toast.error('Enter at least one unit value');
+      return;
+    }
+
+    if (bulkData.targetSalesperson === 'All') {
+      toast.error('Please assign target to a specific staff member');
       return;
     }
 
@@ -331,10 +363,12 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.branch}
                   onChange={e => updateFilters({...currentFilters, branch: e.target.value, employee: 'All'})}
-                  disabled={user.role !== 'Admin'}
                 >
-                  <option value="All">All Branches</option>
-                  {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                  {user.role === 'Admin' && <option value="All">All Branches</option>}
+                  {user.role === 'Branch Head' && user.branch_ids?.length > 1 && <option value="All">All My Branches</option>}
+                  {BRANCHES
+                    .filter(b => user.role === 'Admin' || user.branch_ids?.includes(b))
+                    .map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
             )}
@@ -372,7 +406,18 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                 >
                   <option value="All">All Staff</option>
                   {employees
-                    .filter(e => currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch))
+                    .filter(e => {
+                      // Admin sees everyone
+                      if (user.role === 'Admin') {
+                        return currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch);
+                      }
+                      // Branch Head sees only their staff
+                      const isMyStaff = e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
+                      if (currentFilters.branch === 'All') {
+                        return isMyStaff;
+                      }
+                      return isMyStaff && e.branch_ids?.includes(currentFilters.branch);
+                    })
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
                         {emp.full_name}
@@ -423,12 +468,37 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                     <td className="p-4">
                       <Input 
                         placeholder="Customer..." 
-                        className="h-9 text-xs font-black border-none bg-zinc-50/50 rounded-lg px-2 focus-visible:ring-1 focus-visible:ring-black"
+                        className="h-9 text-xs font-black border-none bg-zinc-50/50 rounded-lg px-2 focus-visible:ring-1 focus-visible:ring-black mb-1"
                         value={row.customer_name}
                         spellCheck={false}
                         data-gramm="false"
                         onChange={e => updateRowField(row.id, 'customer_name', e.target.value)}
                       />
+                      <div className="flex flex-wrap items-center gap-1.5 px-2">
+                        {(user.role === 'Admin' || user.role === 'Branch Head') ? (
+                          <select 
+                            className="text-[9px] font-black uppercase px-1 py-0.5 bg-zinc-100 text-zinc-600 rounded tracking-tighter border-none outline-none appearance-none cursor-pointer hover:bg-zinc-200 transition-colors"
+                            value={row.salesperson_id}
+                            onChange={e => updateRowField(row.id, 'salesperson_id', e.target.value)}
+                          >
+                            {employees
+                              .filter(e => {
+                                if (user.role === 'Admin') return e.branch_ids?.includes(row.branch);
+                                // Branch head can only reassign within their permitted branches
+                                return e.branch_ids?.includes(row.branch) && e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
+                              })
+                              .map(emp => (
+                                <option key={emp.id} value={emp.id}>{emp.full_name}</option>
+                              ))
+                            }
+                          </select>
+                        ) : (
+                          <span className="text-[9px] font-black uppercase px-1 py-0.5 bg-zinc-100 text-zinc-500 rounded tracking-tighter">
+                            {employees.find(e => e.id === row.salesperson_id || e.full_name === row.salesperson_id)?.full_name || row.salesperson_id || 'Unassigned'}
+                          </span>
+                        )}
+                        <span className="text-[9px] font-bold text-zinc-300 italic">@{row.branch}</span>
+                      </div>
                     </td>
                     <td className="p-4">
                       <select 
@@ -514,6 +584,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                         value={bulkData.targetSalesperson}
                         onChange={e => setBulkData({...bulkData, targetSalesperson: e.target.value})}
                       >
+                        <option value="All" disabled>Select Staff...</option>
                         {employees
                           .filter(e => bulkData.targetBranch === 'All' || e.branch_ids?.includes(bulkData.targetBranch))
                           .map(emp => (

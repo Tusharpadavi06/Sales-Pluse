@@ -92,9 +92,16 @@ export default function Dashboard({ user }: DashboardProps) {
       if (filters.year) query = query.eq('year', filters.year);
       if (filters.month !== 'All') query = query.eq('month', filters.month);
       
-      // Fixed: Filter by exact salesperson_id (UUID)
+      // Fixed: Filter by exact salesperson_id (UUID) OR full_name (legacy)
       if (filters.employee !== 'All' && filters.employee) {
-        query = query.eq('salesperson_id', filters.employee);
+        const selectedEmp = employees.find(e => e.id === filters.employee);
+        if (selectedEmp) {
+          // If we have the employee object, search for both their ID and their full name (for legacy support)
+          query = query.in('salesperson_id', [selectedEmp.id, selectedEmp.full_name]);
+        } else {
+          // If not found yet (maybe still loading), just use the ID
+          query = query.eq('salesperson_id', filters.employee);
+        }
       }
       
       if (filters.customer) query = query.ilike('customer_name', `%${filters.customer}%`);
@@ -136,8 +143,8 @@ export default function Dashboard({ user }: DashboardProps) {
       salesData?.forEach(s => {
         const salespersonId = s.salesperson_id;
         if (!empMap[salespersonId]) {
-          const emp = employees.find(e => e.id === salespersonId);
-          empMap[salespersonId] = { name: emp?.full_name || 'Staff', target: 0, actual: 0 };
+          const emp = employees.find(e => e.id === salespersonId || e.full_name === salespersonId);
+          empMap[salespersonId] = { name: emp?.full_name || salespersonId || 'Staff', target: 0, actual: 0 };
         }
         empMap[salespersonId].target += Number(s.target_amount) || 0;
         empMap[salespersonId].actual += Number(s.actual_amount) || 0;
@@ -221,13 +228,15 @@ export default function Dashboard({ user }: DashboardProps) {
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Branch</label>
                 <select 
-                  className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-lg focus:ring-1 focus:ring-black outline-none appearance-none"
+                  className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-lg focus:ring-1 focus:ring-black outline-none appearance-none font-bold"
                   value={filters.branch}
                   onChange={e => setFilters({...filters, branch: e.target.value, employee: 'All'})}
-                  disabled={user.role !== 'Admin'}
                 >
-                  <option value="All">All Branches</option>
-                  {BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                  {user.role === 'Admin' && <option value="All">All Branches</option>}
+                  {user.role === 'Branch Head' && user.branch_ids?.length > 1 && <option value="All">All My Branches</option>}
+                  {BRANCHES
+                    .filter(b => user.role === 'Admin' || user.branch_ids?.includes(b))
+                    .map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
             )}
@@ -278,7 +287,18 @@ export default function Dashboard({ user }: DashboardProps) {
                 >
                   <option value="All">All Staff</option>
                   {employees
-                    .filter(e => filters.branch === 'All' || e.branch_ids?.includes(filters.branch))
+                    .filter(e => {
+                      // Admin sees everyone
+                      if (user.role === 'Admin') {
+                        return filters.branch === 'All' || e.branch_ids?.includes(filters.branch);
+                      }
+                      // Branch Head sees only their staff
+                      const isMyStaff = e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
+                      if (filters.branch === 'All') {
+                        return isMyStaff;
+                      }
+                      return isMyStaff && e.branch_ids?.includes(filters.branch);
+                    })
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
                         {emp.full_name}
