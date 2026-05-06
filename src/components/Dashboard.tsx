@@ -30,20 +30,13 @@ import { supabase } from '@/src/lib/supabase';
 
 interface DashboardProps {
   user: Profile;
+  filters: DashboardFilters;
+  setFilters: React.Dispatch<React.SetStateAction<DashboardFilters>>;
 }
 
 const COLORS = ['#000000', '#333333', '#666666', '#999999', '#CCCCCC'];
 
-export default function Dashboard({ user }: DashboardProps) {
-  const [filters, setFilters] = useState<DashboardFilters>({
-    customer: '',
-    year: YEARS[2],
-    month: 'All',
-    unit: 'All',
-    branch: user.role === 'Admin' ? 'All' : user.branch_ids[0],
-    employee: 'All'
-  });
-
+export default function Dashboard({ user, filters, setFilters }: DashboardProps) {
   const [kpis, setKpis] = useState({
     uniqueCustomers: 0,
     totalTarget: 0,
@@ -77,47 +70,65 @@ export default function Dashboard({ user }: DashboardProps) {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      let query = supabase.from('Sales_database').select('*');
-      
-      // Apply Role-Based Restrictions
-      if (user.role === 'Sales Person') {
-        query = query.eq('salesperson_id', user.id);
-      } else if (user.role === 'Branch Head') {
-        query = query.in('branch_id', user.branch_ids);
-      }
+      let salesData: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      // Apply User Filters
-      if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
-      if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
-      if (filters.year) query = query.eq('year', filters.year);
-      if (filters.month !== 'All') query = query.eq('month', filters.month);
-      
-      // Fixed: Filter by exact salesperson_id (UUID) OR full_name (legacy)
-      if (filters.employee !== 'All' && filters.employee) {
-        const selectedEmp = employees.find(e => e.id === filters.employee);
-        if (selectedEmp) {
-          // If we have the employee object, search for both their ID and their full name (for legacy support)
-          query = query.in('salesperson_id', [selectedEmp.id, selectedEmp.full_name]);
-        } else {
-          // If not found yet (maybe still loading), just use the ID
-          query = query.eq('salesperson_id', filters.employee);
+      while (hasMore) {
+        let query = supabase.from('Sales_database').select('*').range(page * pageSize, (page + 1) * pageSize - 1);
+        
+        // Apply Role-Based Restrictions
+        if (user.role === 'Sales Person') {
+          query = query.eq('salesperson_id', user.id);
+        } else if (user.role === 'Branch Head') {
+          query = query.in('branch_id', user.branch_ids);
         }
+
+        // Apply User Filters
+        if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
+        if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
+        if (filters.year) query = query.eq('year', filters.year);
+        if (filters.month !== 'All') {
+          query = query.eq('month', filters.month);
+        }
+        
+        // Fixed: Filter by exact salesperson_id (UUID) OR full_name (legacy)
+        if (filters.employee !== 'All' && filters.employee) {
+          const selectedEmp = employees.find(e => e.id === filters.employee || e.full_name === filters.employee);
+          if (selectedEmp) {
+            query = query.or(`salesperson_id.eq."${selectedEmp.id}",salesperson_id.eq."${selectedEmp.full_name}"`);
+          } else {
+            query = query.eq('salesperson_id', filters.employee);
+          }
+        }
+        
+        if (filters.customer) {
+          query = query.ilike('customer_name', `%${filters.customer}%`);
+        }
+
+        const { data: pageData, error: salesError } = await query;
+        if (salesError) throw salesError;
+
+        if (pageData && pageData.length > 0) {
+          salesData = [...salesData, ...pageData];
+          if (pageData.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+        
+        // Safety break to prevent infinite loops if something goes wrong
+        if (page > 50) break; 
       }
-      
-      if (filters.customer) query = query.ilike('customer_name', `%${filters.customer}%`);
-
-      const { data: salesData, error: salesError } = await query;
-      if (salesError) throw salesError;
-
-      // Filter monthly if specified within the query results for charts primarily
-      const monthFilteredData = filters.month === 'All' 
-        ? salesData 
-        : salesData?.filter(s => s.month === filters.month) || [];
 
       // Calculate KPIs
-      const uniqueCustomers = new Set(salesData?.map(s => s.customer_name)).size;
-      const totalTarget = monthFilteredData.reduce((acc, s) => acc + (Number(s.target_amount) || 0), 0);
-      const totalActual = monthFilteredData.reduce((acc, s) => acc + (Number(s.actual_amount) || 0), 0);
+      const uniqueCustomers = new Set(salesData.map(s => (s.customer_name || '').trim())).size;
+      const totalTarget = salesData.reduce((acc, s) => acc + (Number(s.target_amount) || 0), 0);
+      const totalActual = salesData.reduce((acc, s) => acc + (Number(s.actual_amount) || 0), 0);
       const achievement = totalTarget > 0 ? (totalActual / totalTarget) * 100 : 0;
 
       setKpis({
@@ -141,13 +152,15 @@ export default function Dashboard({ user }: DashboardProps) {
       // Employee Performance
       const empMap: any = {};
       salesData?.forEach(s => {
-        const salespersonId = s.salesperson_id;
-        if (!empMap[salespersonId]) {
-          const emp = employees.find(e => e.id === salespersonId || e.full_name === salespersonId);
-          empMap[salespersonId] = { name: emp?.full_name || salespersonId || 'Staff', target: 0, actual: 0 };
+        let sid = s.salesperson_id;
+        const emp = employees.find(e => e.id === sid || e.full_name === sid);
+        const uniqueKey = emp?.id || sid; 
+        
+        if (!empMap[uniqueKey]) {
+          empMap[uniqueKey] = { name: emp?.full_name || sid || 'Staff', target: 0, actual: 0 };
         }
-        empMap[salespersonId].target += Number(s.target_amount) || 0;
-        empMap[salespersonId].actual += Number(s.actual_amount) || 0;
+        empMap[uniqueKey].target += Number(s.target_amount) || 0;
+        empMap[uniqueKey].actual += Number(s.actual_amount) || 0;
       });
 
       // Revenue Mix by Branch
@@ -187,7 +200,7 @@ export default function Dashboard({ user }: DashboardProps) {
 
   useEffect(() => {
     fetchDashboardData();
-  }, [filters]);
+  }, [filters, employees]);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">

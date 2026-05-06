@@ -32,18 +32,12 @@ interface TargetRow {
 
 export default function TargetPlanning({ user, rows, setRows, filters, setFilters }: TargetPlanningProps) {
   const [employees, setEmployees] = useState<Profile[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [showBulkEntry, setShowBulkEntry] = useState(false);
   
-  // Use persistent filters or initialize defaults
-  const currentFilters = filters || {
-    branch: user.role === 'Admin' ? 'All' : (user.branch_ids[0] || BRANCHES[0]),
-    unit: 'All',
-    year: YEARS[2], // 2026-2027
-    employee: user.role === 'Sales Person' ? user.id : 'All'
-  };
+  // Use global filters from props
+  const currentFilters = filters;
 
   const updateFilters = (newFilters: any) => {
     setFilters(newFilters);
@@ -51,7 +45,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
   
   // Derived state for display rows with search filtering
   const displayRows = rows.filter(r => 
-    r.customer_name.toLowerCase().includes(searchTerm.toLowerCase())
+    (r.customer_name || '').toLowerCase().includes((filters.customer || '').toLowerCase())
   );
   
   // Bulk Entry State
@@ -89,37 +83,54 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     if (!currentFilters.year) return;
     setLoading(true);
     try {
-      let query = supabase.from('Sales_database').select('*');
-      
-      // Filter based on currently active viewing filters
-      if (user.role === 'Sales Person') {
-        query = query.eq('salesperson_id', user.id);
-      } else if (user.role === 'Branch Head') {
-        query = query.in('branch_id', user.branch_ids);
-      }
+      let allData: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
-      if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
-      if (currentFilters.year) query = query.eq('year', currentFilters.year);
-      
-      if (currentFilters.employee !== 'All' && currentFilters.employee) {
-        const selectedEmp = employees.find(e => e.id === currentFilters.employee);
-        if (selectedEmp) {
-          // If we have the employee object, search for both their ID and their full name (for legacy support)
-          query = query.in('salesperson_id', [selectedEmp.id, selectedEmp.full_name]);
-        } else {
-          // If not found yet (maybe still loading), just use the ID
-          query = query.eq('salesperson_id', currentFilters.employee);
-        }
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      if (data) {
-        const groupedRows: Record<string, TargetRow> = {};
+      while (hasMore) {
+        let query = supabase.from('Sales_database').select('*').range(page * pageSize, (page + 1) * pageSize - 1);
         
-        data.forEach(record => {
+        // Filter based on currently active viewing filters
+        if (user.role === 'Sales Person') {
+          query = query.eq('salesperson_id', user.id);
+        } else if (user.role === 'Branch Head') {
+          query = query.in('branch_id', user.branch_ids);
+        }
+
+        if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
+        if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
+        if (currentFilters.year) query = query.eq('year', currentFilters.year);
+        
+        if (currentFilters.employee !== 'All' && currentFilters.employee) {
+          const selectedEmp = employees.find(e => e.id === currentFilters.employee || e.full_name === currentFilters.employee);
+          if (selectedEmp) {
+            query = query.or(`salesperson_id.eq."${selectedEmp.id}",salesperson_id.eq."${selectedEmp.full_name}"`);
+          } else {
+            query = query.eq('salesperson_id', currentFilters.employee);
+          }
+        }
+
+        const { data: pageData, error } = await query;
+        if (error) throw error;
+
+        if (pageData && pageData.length > 0) {
+          allData = [...allData, ...pageData];
+          if (pageData.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+        
+        if (page > 50) break;
+      }
+
+      const groupedRows: Record<string, TargetRow> = {};
+      
+      allData.forEach(record => {
           // Normalize legacy name records to actual UUIDs if possible for UI dropdown compatibility
           let sid = record.salesperson_id;
           const matchingEmp = employees.find(e => e.id === sid || e.full_name === sid);
@@ -139,9 +150,11 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               salesperson_id: sid
             };
           }
-          groupedRows[key].monthly_targets[record.month] = Number(record.target_amount) || 0;
+          groupedRows[key].monthly_targets[record.month] = (groupedRows[key].monthly_targets[record.month] || 0) + (Number(record.target_amount) || 0);
           if (!groupedRows[key].record_ids) groupedRows[key].record_ids = {};
-          groupedRows[key].record_ids[record.month] = record.id;
+          if (!groupedRows[key].record_ids[record.month]) {
+            groupedRows[key].record_ids[record.month] = record.id;
+          }
         });
 
         // Sort rows by customer name alphabetically
@@ -150,9 +163,6 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         );
         
         setRows(finalRows);
-      } else {
-        setRows([]);
-      }
     } catch (error) {
       console.error('Fetch Error:', error);
     } finally {
@@ -162,15 +172,12 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
 
   useEffect(() => {
     fetchEmployees();
-  }, [currentFilters.branch]);
+  }, []);
 
   useEffect(() => {
+    // fetchData will run when filters or employees change
     fetchData();
-    // Initialize filters in App.tsx if they don't exist
-    if (!filters) {
-      setFilters(currentFilters);
-    }
-  }, [filters]); 
+  }, [filters, employees]); 
 
   const addRow = () => {
     setRows([...rows, { 
@@ -213,6 +220,41 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       }
       return r;
     }));
+  };
+
+  const handleReassign = async (rowId: string, newSalespersonId: string) => {
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+
+    setLoading(true);
+    try {
+      const recordIds = Object.values(row.record_ids || {}).filter(id => id && String(id).length > 5);
+      
+      if (recordIds.length > 0) {
+        const { error } = await supabase
+          .from('Sales_database')
+          .update({ salesperson_id: newSalespersonId })
+          .in('id', recordIds);
+
+        if (error) throw error;
+        toast.success('Salesperson updated successfully');
+      }
+      
+      // Update local state too
+      updateRowField(rowId, 'salesperson_id', newSalespersonId);
+      
+      // If records were updated, we might want to refetch to ensure consistency, 
+      // but updating the row locally is smoother. 
+      // However, if the filter is active, the row might disappear if it no longer matches.
+      if (currentFilters.employee !== 'All') {
+        fetchData();
+      }
+    } catch (err) {
+      console.error('Reassign error:', err);
+      toast.error('Failed to update salesperson');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -434,8 +476,8 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                 <Input 
                   placeholder="Filter by customer..."
                   className="h-10 pl-9 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
+                  value={filters.customer || ''}
+                  onChange={e => updateFilters({...filters, customer: e.target.value})}
                 />
               </div>
             </div>
@@ -481,6 +523,10 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                             value={row.salesperson_id}
                             onChange={e => updateRowField(row.id, 'salesperson_id', e.target.value)}
                           >
+                            {/* Ensure current value is visible even if legacy name or not in branch */}
+                            {!employees.some(e => e.id === row.salesperson_id) && (
+                              <option value={row.salesperson_id}>{row.salesperson_id}</option>
+                            )}
                             {employees
                               .filter(e => {
                                 if (user.role === 'Admin') return e.branch_ids?.includes(row.branch);

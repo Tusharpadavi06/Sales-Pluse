@@ -23,15 +23,9 @@ interface EntryCell {
 
 export default function ActualEntry({ user, entries, setEntries, filters, setFilters }: ActualEntryProps) {
   const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
   
-  // Use persistent filters or initialize defaults
-  const currentFilters = filters || {
-    branch: user.role === 'Admin' ? 'All' : (user.branch_ids[0] || BRANCHES[0]),
-    unit: 'All',
-    year: YEARS[2], // 2026-2027
-    employee: user.role === 'Sales Person' ? user.id : 'All'
-  };
+  // Use global filters from props
+  const currentFilters = filters;
 
   const updateFilters = (newFilters: any) => {
     setFilters(newFilters);
@@ -40,7 +34,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   const [employees, setEmployees] = useState<Profile[]>([]);
 
   const displayEntries = entries.filter(e => 
-    e.customer_name.toLowerCase().includes(searchTerm.toLowerCase())
+    (e.customer_name || '').toLowerCase().includes((filters.customer || '').toLowerCase())
   );
 
   const fetchEmployees = async () => {
@@ -59,37 +53,55 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   const fetchData = async () => {
     setLoading(true);
     try {
-      let query = supabase.from('Sales_database').select('*');
-      
-      // Role-based filtering
-      if (user.role === 'Sales Person') {
-        query = query.eq('salesperson_id', user.id);
-      } else if (user.role === 'Branch Head') {
-        query = query.in('branch_id', user.branch_ids);
-      }
+      let salesData: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
-      if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
-      if (currentFilters.year) query = query.eq('year', currentFilters.year);
-      
-      if (currentFilters.employee !== 'All' && currentFilters.employee) {
-        const selectedEmp = employees.find(e => e.id === currentFilters.employee);
-        if (selectedEmp) {
-          // If we have the employee object, search for both their ID and their full name (for legacy support)
-          query = query.in('salesperson_id', [selectedEmp.id, selectedEmp.full_name]);
-        } else {
-          // If not found yet (maybe still loading), just use the ID
-          query = query.eq('salesperson_id', currentFilters.employee);
+      while (hasMore) {
+        let query = supabase.from('Sales_database').select('*').range(page * pageSize, (page + 1) * pageSize - 1);
+        
+        // Role-based filtering
+        if (user.role === 'Sales Person') {
+          query = query.eq('salesperson_id', user.id);
+        } else if (user.role === 'Branch Head') {
+          query = query.in('branch_id', user.branch_ids);
         }
+
+        if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
+        if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
+        if (currentFilters.year) query = query.eq('year', currentFilters.year);
+        
+        if (currentFilters.employee !== 'All' && currentFilters.employee) {
+          const selectedEmp = employees.find(e => e.id === currentFilters.employee || e.full_name === currentFilters.employee);
+          if (selectedEmp) {
+            query = query.or(`salesperson_id.eq."${selectedEmp.id}",salesperson_id.eq."${selectedEmp.full_name}"`);
+          } else {
+            query = query.eq('salesperson_id', currentFilters.employee);
+          }
+        }
+
+        const { data: pageData, error } = await query;
+        if (error) throw error;
+
+        if (pageData && pageData.length > 0) {
+          salesData = [...salesData, ...pageData];
+          if (pageData.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+        
+        if (page > 50) break;
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-
-      if (data && data.length > 0) {
+      if (salesData.length > 0) {
         const groupedRows: Record<string, any> = {};
         
-        data.forEach(record => {
+        salesData.forEach(record => {
           let sid = record.salesperson_id;
           const matchingEmp = employees.find(e => e.id === sid || e.full_name === sid);
           if (matchingEmp) sid = matchingEmp.id;
@@ -106,12 +118,18 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
             };
           }
           
-          groupedRows[key].monthData[record.month] = {
-            target: Number(record.target_amount) || 0,
-            actual: Number(record.actual_amount) || 0,
-            gap: Math.max(0, (Number(record.target_amount) || 0) - (Number(record.actual_amount) || 0)),
-            record_id: record.id
-          };
+          if (!groupedRows[key].monthData[record.month]) {
+            groupedRows[key].monthData[record.month] = {
+              target: 0,
+              actual: 0,
+              gap: 0,
+              record_id: record.id // Store first ID
+            };
+          }
+          
+          groupedRows[key].monthData[record.month].target += Number(record.target_amount) || 0;
+          groupedRows[key].monthData[record.month].actual += Number(record.actual_amount) || 0;
+          groupedRows[key].monthData[record.month].gap = Math.max(0, groupedRows[key].monthData[record.month].target - groupedRows[key].monthData[record.month].actual);
         });
 
         const finalEntries = Object.values(groupedRows).map(row => {
@@ -142,11 +160,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
 
   useEffect(() => {
     fetchData();
-    // Initialize filters in App.tsx if they don't exist
-    if (!filters) {
-      setFilters(currentFilters);
-    }
-  }, [filters]);
+  }, [filters, employees]);
 
   const updateActual = (rowId: string, month: string, value: number) => {
     setEntries(prev => prev.map(entry => {
@@ -313,8 +327,8 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                 <Input 
                   placeholder="Filter entries..."
                   className="h-10 pl-9 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
+                  value={filters.customer || ''}
+                  onChange={e => updateFilters({...filters, customer: e.target.value})}
                 />
               </div>
             </div>

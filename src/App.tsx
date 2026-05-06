@@ -21,9 +21,17 @@ export default function App() {
 
   // Persistent States for Tabs
   const [targetRows, setTargetRows] = useState<any[]>([]);
-  const [targetFilters, setTargetFilters] = useState<any>(null);
   const [actualEntries, setActualEntries] = useState<any[]>([]);
-  const [actualFilters, setActualFilters] = useState<any>(null);
+  
+  // Shared Filter State - Interconnected across all tabs as requested
+  const [globalFilters, setGlobalFilters] = useState<any>({
+    branch: 'All', // Will be refined by profile fetch
+    unit: 'All',
+    year: '2026-2027',
+    employee: 'All',
+    month: 'All',
+    customer: ''
+  });
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -50,14 +58,21 @@ export default function App() {
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
+      const { data: profileData, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single();
       
       if (error) throw error;
-      setProfile(data);
+      setProfile(profileData);
+
+      // Initialize global filters based on user role once profile is available
+      setGlobalFilters((prev: any) => ({
+        ...prev,
+        branch: profileData.role === 'Admin' ? 'All' : (profileData.branch_ids?.[0] || 'Mumbai'),
+        employee: profileData.role === 'Sales Person' ? profileData.id : 'All'
+      }));
     } catch (err) {
       console.error('Error fetching profile:', err);
     } finally {
@@ -91,7 +106,16 @@ export default function App() {
         <Sidebar user={profile} />
         <main className="flex-1 p-8 max-w-7xl mx-auto w-full">
           <Routes>
-            <Route path="/" element={<Dashboard user={profile} />} />
+            <Route 
+              path="/" 
+              element={
+                <Dashboard 
+                  user={profile} 
+                  filters={globalFilters}
+                  setFilters={setGlobalFilters}
+                />
+              } 
+            />
             <Route 
               path="/targets" 
               element={
@@ -99,8 +123,8 @@ export default function App() {
                   user={profile} 
                   rows={targetRows} 
                   setRows={setTargetRows} 
-                  filters={targetFilters}
-                  setFilters={setTargetFilters}
+                  filters={globalFilters}
+                  setFilters={setGlobalFilters}
                 />
               } 
             />
@@ -111,8 +135,8 @@ export default function App() {
                   user={profile} 
                   entries={actualEntries} 
                   setEntries={setActualEntries} 
-                  filters={actualFilters}
-                  setFilters={setActualFilters}
+                  filters={globalFilters}
+                  setFilters={setGlobalFilters}
                 />
               } 
             />
