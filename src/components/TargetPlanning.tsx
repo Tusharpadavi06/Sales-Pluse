@@ -32,7 +32,7 @@ interface TargetRow {
 
 export default function TargetPlanning({ user, rows, setRows, filters, setFilters }: TargetPlanningProps) {
   const [employees, setEmployees] = useState<Profile[]>([]);
-  
+  const [filterMetadata, setFilterMetadata] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showBulkEntry, setShowBulkEntry] = useState(false);
   
@@ -66,6 +66,18 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     }));
   }, [currentFilters.employee, currentFilters.branch, showBulkEntry]);
 
+  const fetchFilterMetadata = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('Sales_database')
+        .select('branch_id, Unit_name, salesperson_id');
+      if (error) throw error;
+      if (data) setFilterMetadata(data);
+    } catch (err) {
+      console.error('Error fetching filter metadata:', err);
+    }
+  };
+
   const fetchEmployees = async () => {
     try {
       const { data, error } = await supabase
@@ -78,6 +90,8 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       console.error('Error fetching employees:', err);
     }
   };
+
+  const [availableUnits, setAvailableUnits] = useState<string[]>(UNITS);
 
   const fetchData = async () => {
     if (!currentFilters.year) return;
@@ -100,15 +114,10 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
 
         if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
         if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
-        if (currentFilters.year) query = query.eq('year', currentFilters.year);
+        if (currentFilters.year !== 'All' && currentFilters.year) query = query.eq('year', currentFilters.year);
         
         if (currentFilters.employee !== 'All' && currentFilters.employee) {
-          const selectedEmp = employees.find(e => e.id === currentFilters.employee || e.full_name === currentFilters.employee);
-          if (selectedEmp) {
-            query = query.or(`salesperson_id.eq."${selectedEmp.id}",salesperson_id.eq."${selectedEmp.full_name}"`);
-          } else {
-            query = query.eq('salesperson_id', currentFilters.employee);
-          }
+          query = query.eq('salesperson_id', currentFilters.employee);
         }
 
         const { data: pageData, error } = await query;
@@ -163,6 +172,14 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         );
         
         setRows(finalRows);
+
+        // Cascading Units
+        if (currentFilters.unit === 'All') {
+          const unitsWithData = Array.from(new Set(allData.map(s => s.Unit_name))).filter(Boolean) as string[];
+          if (unitsWithData.length > 0) setAvailableUnits(unitsWithData.sort());
+        } else if (currentFilters.branch === 'All' && currentFilters.employee === 'All') {
+          setAvailableUnits(UNITS);
+        }
     } catch (error) {
       console.error('Fetch Error:', error);
     } finally {
@@ -172,6 +189,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
 
   useEffect(() => {
     fetchEmployees();
+    fetchFilterMetadata();
   }, []);
 
   useEffect(() => {
@@ -423,7 +441,18 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                 onChange={e => updateFilters({...currentFilters, unit: e.target.value})}
               >
                 <option value="All">All Units</option>
-                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                {UNITS
+                  .filter(u => {
+                    if (currentFilters.branch === 'All' && currentFilters.employee === 'All') return true;
+                    const selectedEmp = employees.find(e => e.id === currentFilters.employee);
+                    return filterMetadata.some(m => 
+                      (currentFilters.branch === 'All' || m.branch_id === currentFilters.branch) &&
+                      (currentFilters.employee === 'All' || m.salesperson_id === currentFilters.employee || 
+                       selectedEmp?.full_name === m.salesperson_id) &&
+                      m.Unit_name === u
+                    );
+                  })
+                  .map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
 
@@ -434,6 +463,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                 value={currentFilters.year}
                 onChange={e => updateFilters({...currentFilters, year: e.target.value})}
               >
+                <option value="All">All Years</option>
                 {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
@@ -449,16 +479,20 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                   <option value="All">All Staff</option>
                   {employees
                     .filter(e => {
-                      // Admin sees everyone
-                      if (user.role === 'Admin') {
-                        return currentFilters.branch === 'All' || e.branch_ids?.includes(currentFilters.branch);
+                      if (currentFilters.branch !== 'All' && !e.branch_ids?.includes(currentFilters.branch)) return false;
+                      
+                      if (currentFilters.unit !== 'All') {
+                        return filterMetadata.some(m => 
+                          m.Unit_name === currentFilters.unit && 
+                          (m.salesperson_id === e.id || m.salesperson_id === e.full_name)
+                        );
                       }
-                      // Branch Head sees only their staff
-                      const isMyStaff = e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
+                      
                       if (currentFilters.branch === 'All') {
-                        return isMyStaff;
+                        if (user.role === 'Admin') return true;
+                        return e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
                       }
-                      return isMyStaff && e.branch_ids?.includes(currentFilters.branch);
+                      return true;
                     })
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>

@@ -53,6 +53,20 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
 
   const [loading, setLoading] = useState(true);
   const [employees, setEmployees] = useState<Profile[]>([]);
+  const [availableUnits, setAvailableUnits] = useState<string[]>(UNITS);
+  const [filterMetadata, setFilterMetadata] = useState<any[]>([]);
+
+  const fetchFilterMetadata = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('Sales_database')
+        .select('branch_id, Unit_name, salesperson_id');
+      if (error) throw error;
+      if (data) setFilterMetadata(data);
+    } catch (err) {
+      console.error('Error fetching filter metadata:', err);
+    }
+  };
 
   const fetchEmployees = async () => {
     try {
@@ -88,19 +102,16 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
         // Apply User Filters
         if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
         if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
-        if (filters.year) query = query.eq('year', filters.year);
+        if (filters.year !== 'All' && filters.year) query = query.eq('year', filters.year);
         if (filters.month !== 'All') {
           query = query.eq('month', filters.month);
         }
         
-        // Fixed: Filter by exact salesperson_id (UUID) OR full_name (legacy)
+        // Filter by salesperson_id (UID)
         if (filters.employee !== 'All' && filters.employee) {
-          const selectedEmp = employees.find(e => e.id === filters.employee || e.full_name === filters.employee);
-          if (selectedEmp) {
-            query = query.or(`salesperson_id.eq."${selectedEmp.id}",salesperson_id.eq."${selectedEmp.full_name}"`);
-          } else {
-            query = query.eq('salesperson_id', filters.employee);
-          }
+          // In most Supabase setups, salesperson_id is a UUID referencing the profiles table.
+          // We use the ID directly as it's the most reliable and efficient way to filter.
+          query = query.eq('salesperson_id', filters.employee);
         }
         
         if (filters.customer) {
@@ -182,10 +193,18 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
 
       setChartData({
         unitPerformance: Object.values(unitsMap).filter((u: any) => u.target > 0 || u.actual > 0),
-        employeePerformance: Object.values(empMap).slice(0, 6),
+        employeePerformance: Object.values(empMap).sort((a: any, b: any) => b.actual - a.actual).slice(0, 10),
         revenueMix: Object.entries(branchMap).map(([name, value]) => ({ name, value })),
         monthlyTrend: MONTHS.map(m => trendMap[m])
       });
+
+      // Update available units for cascading filters if "All" is selected
+      if (filters.unit === 'All') {
+        const unitsWithData = Array.from(new Set(salesData.map(s => s.Unit_name))).filter(Boolean) as string[];
+        if (unitsWithData.length > 0) setAvailableUnits(unitsWithData.sort());
+      } else if (filters.branch === 'All' && filters.employee === 'All') {
+        setAvailableUnits(UNITS);
+      }
 
     } catch (error) {
       console.error('Dashboard Fetch Error:', error);
@@ -196,7 +215,8 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
 
   useEffect(() => {
     fetchEmployees();
-  }, [filters.branch]);
+    fetchFilterMetadata();
+  }, []);
 
   useEffect(() => {
     fetchDashboardData();
@@ -257,22 +277,34 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
             <div className="space-y-1">
               <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Unit</label>
               <select 
-                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-lg focus:ring-1 focus:ring-black outline-none appearance-none"
+                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-lg focus:ring-1 focus:ring-black outline-none appearance-none font-bold"
                 value={filters.unit}
                 onChange={e => setFilters({...filters, unit: e.target.value})}
               >
                 <option value="All">All Units</option>
-                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                {UNITS
+                  .filter(u => {
+                    // Filter units based on selected branch and employee
+                    if (filters.branch === 'All' && filters.employee === 'All') return true;
+                    return filterMetadata.some(m => 
+                      (filters.branch === 'All' || m.branch_id === filters.branch) &&
+                      (filters.employee === 'All' || m.salesperson_id === filters.employee || 
+                       employees.find(e => e.id === filters.employee)?.full_name === m.salesperson_id) &&
+                      m.Unit_name === u
+                    );
+                  })
+                  .map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
 
             <div className="space-y-1">
               <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Fiscal Year</label>
               <select 
-                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-lg focus:ring-1 focus:ring-black outline-none appearance-none"
+                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-lg focus:ring-1 focus:ring-black outline-none appearance-none font-bold"
                 value={filters.year}
                 onChange={e => setFilters({...filters, year: e.target.value})}
               >
+                <option value="All">All Years</option>
                 {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
@@ -301,16 +333,23 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
                   <option value="All">All Staff</option>
                   {employees
                     .filter(e => {
-                      // Admin sees everyone
-                      if (user.role === 'Admin') {
-                        return filters.branch === 'All' || e.branch_ids?.includes(filters.branch);
+                      // Cascading Logic: Filter employees based on selected branch AND unit
+                      // Ensure branch match (handle array of IDs)
+                      if (filters.branch !== 'All' && !e.branch_ids?.includes(filters.branch)) return false;
+                      
+                      if (filters.unit !== 'All') {
+                        // Check if this employee has ANY data for this unit in the metadata
+                        return filterMetadata.some(m => 
+                          String(m.Unit_name).toLowerCase() === filters.unit.toLowerCase() && 
+                          (m.salesperson_id === e.id || m.salesperson_id === e.full_name)
+                        );
                       }
-                      // Branch Head sees only their staff
-                      const isMyStaff = e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
+                      
                       if (filters.branch === 'All') {
-                        return isMyStaff;
+                        if (user.role === 'Admin') return true;
+                        return e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
                       }
-                      return isMyStaff && e.branch_ids?.includes(filters.branch);
+                      return true;
                     })
                     .map(emp => (
                       <option key={emp.id} value={emp.id}>
