@@ -65,13 +65,20 @@ export default function App() {
         .single();
       
       if (error) throw error;
-      setProfile(profileData);
+      
+      // Normalize 'Banglore' to 'Bangalore' if it exists in branch_ids
+      const normalizedProfile = {
+        ...profileData,
+        branch_ids: profileData.branch_ids?.map((b: string) => b === 'Banglore' ? 'Bangalore' : b)
+      };
+      
+      setProfile(normalizedProfile);
 
       // Initialize global filters based on user role once profile is available
       setGlobalFilters((prev: any) => ({
         ...prev,
-        branch: profileData.role === 'Admin' ? 'All' : (profileData.branch_ids?.[0] || 'Mumbai'),
-        employee: profileData.role === 'Sales Person' ? profileData.id : 'All'
+        branch: normalizedProfile.role === 'Admin' ? 'All' : (normalizedProfile.branch_ids?.[0] || 'Mumbai'),
+        employee: normalizedProfile.role === 'Sales Person' ? normalizedProfile.id : 'All'
       }));
     } catch (err) {
       console.error('Error fetching profile:', err);

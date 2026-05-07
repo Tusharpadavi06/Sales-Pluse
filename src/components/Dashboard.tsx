@@ -96,11 +96,21 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
         if (user.role === 'Sales Person') {
           query = query.eq('salesperson_id', user.id);
         } else if (user.role === 'Branch Head') {
-          query = query.in('branch_id', user.branch_ids);
+          // Normalize branch_ids to include both Bangalore and Banglore if either is present
+          const effectiveBranchIds = [...new Set(user.branch_ids.flatMap((b: string) => 
+            b === 'Bangalore' || b === 'Banglore' ? ['Bangalore', 'Banglore'] : [b]
+          ))];
+          query = query.in('branch_id', effectiveBranchIds);
         }
 
         // Apply User Filters
-        if (filters.branch !== 'All') query = query.eq('branch_id', filters.branch);
+        if (filters.branch !== 'All') {
+          if (filters.branch === 'Bangalore' || filters.branch === 'Banglore') {
+            query = query.in('branch_id', ['Bangalore', 'Banglore']);
+          } else {
+            query = query.eq('branch_id', filters.branch);
+          }
+        }
         if (filters.unit !== 'All') query = query.eq('Unit_name', filters.unit);
         if (filters.year !== 'All' && filters.year) query = query.eq('year', filters.year);
         if (filters.month !== 'All') {
@@ -177,7 +187,7 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
       // Revenue Mix by Branch
       const branchMap: any = {};
       salesData?.forEach(s => {
-        const b = s.branch_id;
+        const b = (s.branch_id === 'Banglore') ? 'Bangalore' : s.branch_id;
         branchMap[b] = (branchMap[b] || 0) + (Number(s.actual_amount) || 0);
       });
 
@@ -250,11 +260,16 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
         const matchingEmp = employees.find(e => e.id === sid || e.full_name === sid);
         if (matchingEmp) sid = matchingEmp.id;
 
-        const key = `${record.customer_name}-${record.Unit_name}-${sid}`;
+        // Normalize branch_id for grouping
+        const displayBranch = record.branch_id === 'Banglore' ? 'Bangalore' : record.branch_id;
+
+        const key = `${record.customer_name}-${record.Unit_name}-${sid}-${displayBranch}`;
         if (!groupedRows[key]) {
           groupedRows[key] = {
             customer_name: record.customer_name,
             unit: record.Unit_name,
+            branch_id: displayBranch,
+            salesperson_id: sid,
             monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
           };
         }
@@ -265,23 +280,22 @@ export default function Dashboard({ user, filters, setFilters }: DashboardProps)
         (a.customer_name || '').localeCompare(b.customer_name || '')
       );
 
-      const branchLabel = filters.branch === 'All' ? 'All Branches' : filters.branch;
-      const employeeLabel = filters.employee === 'All' ? 'All Staff' : 
-        employees.find(e => e.id === filters.employee)?.full_name || filters.employee;
-
-      const headerRow1 = [`Branch Name`, `"${branchLabel}"`, ``, `Employee Name`, `"${employeeLabel}"`, ``, `Unit Type`, `"${filters.unit}"`, ``, `Fiscal Year`, `"${filters.year}"`];
-      const tableHeader = [`Sr.No`, `Customer Name`, `Unit`, ...MONTHS, `Total`];
+      const tableHeader = [`Sr.No`, `Branch Name`, `Employee Name`, `Customer Name`, `Unit`, ...MONTHS, `Total`];
 
       const csvRows = [
-        headerRow1.join(','),
-        '', 
         tableHeader.join(',')
       ];
 
       displayRows.forEach((row: any, index) => {
+        const matchingEmp = employees.find(e => e.id === row.salesperson_id || e.full_name === row.salesperson_id);
+        const employeeName = matchingEmp?.full_name || row.salesperson_id || 'Unknown';
+        const branchName = row.branch_id || 'Unknown';
+
         const total = MONTHS.reduce((sum, m) => sum + (row.monthly_targets[m] || 0), 0);
         const csvRow = [
           index + 1,
+          `"${branchName}"`,
+          `"${employeeName}"`,
           `"${row.customer_name}"`,
           `"${row.unit}"`,
           ...MONTHS.map(m => row.monthly_targets[m] || 0),

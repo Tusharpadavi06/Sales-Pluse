@@ -40,29 +40,22 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
   const currentFilters = filters;
 
   const downloadCSV = () => {
-    const branchLabel = currentFilters.branch === 'All' ? 'All Branches' : currentFilters.branch;
-    const employeeLabel = currentFilters.employee === 'All' ? 'All Staff' : 
-      employees.find(e => e.id === currentFilters.employee)?.full_name || currentFilters.employee;
-
-    // Row 1: Header with filters
-    const headerRow1 = [`Branch Name`, `"${branchLabel}"`, ``, `Employee Name`, `"${employeeLabel}"`, ``, `Unit Type`, `"${currentFilters.unit}"`, ``, `Fiscal Year`, `"${currentFilters.year}"`];
-    
-    // Row 2: Empty
-    const headerRow2 = [];
-    
-    // Row 3: Table Headings
-    const tableHeader = [`Sr.No`, `Customer Name`, `Unit`, ...MONTHS, `Total`];
+    const tableHeader = [`Sr.No`, `Branch Name`, `Employee Name`, `Customer Name`, `Unit`, ...MONTHS, `Total`];
 
     const csvRows = [
-      headerRow1.join(','),
-      '', // Row 2 empty
       tableHeader.join(',')
     ];
 
     displayRows.forEach((row, index) => {
+      const matchingEmp = employees.find(e => e.id === row.salesperson_id || e.full_name === row.salesperson_id);
+      const employeeName = matchingEmp?.full_name || row.salesperson_id || 'Unknown';
+      const branchName = row.branch || 'Unknown';
+
       const total = MONTHS.reduce((sum, m) => sum + (row.monthly_targets[m] || 0), 0);
       const csvRow = [
         index + 1,
+        `"${branchName}"`,
+        `"${employeeName}"`,
         `"${row.customer_name}"`,
         `"${row.unit}"`,
         ...MONTHS.map(m => row.monthly_targets[m] || 0),
@@ -155,10 +148,19 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         if (user.role === 'Sales Person') {
           query = query.eq('salesperson_id', user.id);
         } else if (user.role === 'Branch Head') {
-          query = query.in('branch_id', user.branch_ids);
+          const effectiveBranchIds = [...new Set(user.branch_ids.flatMap((b: string) => 
+            b === 'Bangalore' || b === 'Banglore' ? ['Bangalore', 'Banglore'] : [b]
+          ))];
+          query = query.in('branch_id', effectiveBranchIds);
         }
 
-        if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
+        if (currentFilters.branch !== 'All') {
+          if (currentFilters.branch === 'Bangalore' || currentFilters.branch === 'Banglore') {
+            query = query.in('branch_id', ['Bangalore', 'Banglore']);
+          } else {
+            query = query.eq('branch_id', currentFilters.branch);
+          }
+        }
         if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
         if (currentFilters.year !== 'All' && currentFilters.year) query = query.eq('year', currentFilters.year);
         
@@ -191,13 +193,16 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
           const matchingEmp = employees.find(e => e.id === sid || e.full_name === sid);
           if (matchingEmp) sid = matchingEmp.id;
 
-          // Key by customer, unit, and salesperson to ensure distinct rows for different assignments
-          const key = `${record.customer_name}-${record.Unit_name}-${sid}`;
+          // Normalize branch_id for grouping
+          const displayBranch = record.branch_id === 'Banglore' ? 'Bangalore' : record.branch_id;
+
+          // Key by customer, unit, salesperson, and branch to ensure distinct rows for different assignments
+          const key = `${record.customer_name}-${record.Unit_name}-${sid}-${displayBranch}`;
           if (!groupedRows[key]) {
             groupedRows[key] = {
               id: key,
               customer_name: record.customer_name,
-              branch: record.branch_id,
+              branch: displayBranch,
               unit: record.Unit_name,
               year: record.year,
               monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),

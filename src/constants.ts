@@ -5,7 +5,7 @@ export const BRANCHES = [
   'Jaipur',
   'Delhi',
   'Ahmedabad',
-  'Banglore',
+  'Bangalore',
   'Tirupur',
   'Surat',
   'Ludhiana'

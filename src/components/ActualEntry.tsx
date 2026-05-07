@@ -80,10 +80,19 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
         if (user.role === 'Sales Person') {
           query = query.eq('salesperson_id', user.id);
         } else if (user.role === 'Branch Head') {
-          query = query.in('branch_id', user.branch_ids);
+          const effectiveBranchIds = [...new Set(user.branch_ids.flatMap((b: string) => 
+            b === 'Bangalore' || b === 'Banglore' ? ['Bangalore', 'Banglore'] : [b]
+          ))];
+          query = query.in('branch_id', effectiveBranchIds);
         }
 
-        if (currentFilters.branch !== 'All') query = query.eq('branch_id', currentFilters.branch);
+        if (currentFilters.branch !== 'All') {
+          if (currentFilters.branch === 'Bangalore' || currentFilters.branch === 'Banglore') {
+            query = query.in('branch_id', ['Bangalore', 'Banglore']);
+          } else {
+            query = query.eq('branch_id', currentFilters.branch);
+          }
+        }
         if (currentFilters.unit !== 'All') query = query.eq('Unit_name', currentFilters.unit);
         if (currentFilters.year !== 'All' && currentFilters.year) query = query.eq('year', currentFilters.year);
         
@@ -116,12 +125,15 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           const matchingEmp = employees.find(e => e.id === sid || e.full_name === sid);
           if (matchingEmp) sid = matchingEmp.id;
 
-          const key = `${record.customer_name}-${record.Unit_name}-${sid}`;
+          // Normalize branch_id for grouping
+          const displayBranch = record.branch_id === 'Banglore' ? 'Bangalore' : record.branch_id;
+          const key = `${record.customer_name}-${record.Unit_name}-${sid}-${displayBranch}`;
+          
           if (!groupedRows[key]) {
             groupedRows[key] = {
               id: key,
               customer_name: record.customer_name,
-              branch: record.branch_id,
+              branch: displayBranch,
               unit: record.Unit_name,
               salesperson_id: sid,
               monthData: {}
