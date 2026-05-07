@@ -330,19 +330,18 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                   <option value="All">All Staff</option>
                   {employees
                     .filter(e => {
+                      // Cascading Logic: Filter employees based on selected branch
                       if (currentFilters.branch !== 'All' && !e.branch_ids?.includes(currentFilters.branch)) return false;
                       
-                      if (currentFilters.unit !== 'All') {
-                        return filterMetadata.some(m => 
-                          m.Unit_name === currentFilters.unit && 
-                          (m.salesperson_id === e.id || m.salesperson_id === e.full_name)
-                        );
-                      }
-                      
-                      if (currentFilters.branch === 'All') {
-                        if (user.role === 'Admin') return true;
+                      // If user is a Branch Head, they should see employees in their permitted branches
+                      if (user.role === 'Branch Head') {
                         return e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
                       }
+                      
+                      if (user.role === 'Sales Person') {
+                         return e.id === user.id;
+                      }
+
                       return true;
                     })
                     .map(emp => (

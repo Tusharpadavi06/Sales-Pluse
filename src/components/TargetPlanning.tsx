@@ -36,8 +36,54 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
   const [loading, setLoading] = useState(false);
   const [showBulkEntry, setShowBulkEntry] = useState(false);
   
-  // Use global filters from props
+  // Dashboard filters
   const currentFilters = filters;
+
+  const downloadCSV = () => {
+    const branchLabel = currentFilters.branch === 'All' ? 'All Branches' : currentFilters.branch;
+    const employeeLabel = currentFilters.employee === 'All' ? 'All Staff' : 
+      employees.find(e => e.id === currentFilters.employee)?.full_name || currentFilters.employee;
+
+    // Row 1: Header with filters
+    const headerRow1 = [`Branch Name`, `"${branchLabel}"`, ``, `Employee Name`, `"${employeeLabel}"`, ``, `Unit Type`, `"${currentFilters.unit}"`, ``, `Fiscal Year`, `"${currentFilters.year}"`];
+    
+    // Row 2: Empty
+    const headerRow2 = [];
+    
+    // Row 3: Table Headings
+    const tableHeader = [`Sr.No`, `Customer Name`, `Unit`, ...MONTHS, `Total`];
+
+    const csvRows = [
+      headerRow1.join(','),
+      '', // Row 2 empty
+      tableHeader.join(',')
+    ];
+
+    displayRows.forEach((row, index) => {
+      const total = MONTHS.reduce((sum, m) => sum + (row.monthly_targets[m] || 0), 0);
+      const csvRow = [
+        index + 1,
+        `"${row.customer_name}"`,
+        `"${row.unit}"`,
+        ...MONTHS.map(m => row.monthly_targets[m] || 0),
+        total
+      ];
+      csvRows.push(csvRow.join(','));
+    });
+
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `Target_Planning_${currentFilters.year}_${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
 
   const updateFilters = (newFilters: any) => {
     setFilters(newFilters);
@@ -397,6 +443,16 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
           <p className="text-zinc-400 text-sm font-bold uppercase tracking-widest">Master Grid Entry - FY {currentFilters.year}</p>
         </div>
         <div className="flex gap-2">
+          {user.role === 'Admin' && (
+            <Button 
+              variant="outline" 
+              onClick={downloadCSV}
+              className="gap-2 border-green-600 border-2 text-green-700 font-black hover:bg-green-50"
+            >
+              <Save className="h-4 w-4" />
+              DATA DOWNLOAD CSV
+            </Button>
+          )}
           <Button 
             variant="outline" 
             onClick={() => setShowBulkEntry(true)}
@@ -479,19 +535,18 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                   <option value="All">All Staff</option>
                   {employees
                     .filter(e => {
+                      // Cascading Logic: Filter employees based on selected branch
                       if (currentFilters.branch !== 'All' && !e.branch_ids?.includes(currentFilters.branch)) return false;
                       
-                      if (currentFilters.unit !== 'All') {
-                        return filterMetadata.some(m => 
-                          m.Unit_name === currentFilters.unit && 
-                          (m.salesperson_id === e.id || m.salesperson_id === e.full_name)
-                        );
-                      }
-                      
-                      if (currentFilters.branch === 'All') {
-                        if (user.role === 'Admin') return true;
+                      // If user is a Branch Head, they should see employees in their permitted branches
+                      if (user.role === 'Branch Head') {
                         return e.branch_ids?.some(bid => user.branch_ids?.includes(bid));
                       }
+                      
+                      if (user.role === 'Sales Person') {
+                         return e.id === user.id;
+                      }
+
                       return true;
                     })
                     .map(emp => (
