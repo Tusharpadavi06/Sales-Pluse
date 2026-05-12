@@ -23,6 +23,7 @@ interface EntryCell {
 
 export default function ActualEntry({ user, entries, setEntries, filters, setFilters }: ActualEntryProps) {
   const [loading, setLoading] = useState(false);
+  const [dirtyCells, setDirtyCells] = useState<Set<string>>(new Set());
   
   // Use global filters from props
   const currentFilters = filters;
@@ -194,6 +195,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   }, [filters, employees]);
 
   const updateActual = (rowId: string, month: string, value: number) => {
+    setDirtyCells(prev => new Set(prev).add(`${rowId}-${month}`));
     setEntries(prev => prev.map(entry => {
       if (entry.id === rowId) {
         const currentData = entry.monthData[month];
@@ -211,24 +213,39 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   };
 
   const handleSave = async () => {
+    if (dirtyCells.size === 0) {
+      toast.info('No values have been modified');
+      return;
+    }
+
     setLoading(true);
     try {
       const recordsToUpsert: any[] = [];
       
       entries.forEach(entry => {
         Object.entries(entry.monthData).forEach(([month, data]: [string, any]) => {
-          const existingId = data.record_id;
-          if (existingId && existingId !== 'null' && existingId !== 'undefined' && String(existingId).length > 5) {
-            recordsToUpsert.push({
-              id: existingId,
-              actual_amount: data.actual,
-            });
+          if (dirtyCells.has(`${entry.id}-${month}`)) {
+            const existingId = data.record_id;
+            if (existingId && String(existingId).length > 5) {
+              recordsToUpsert.push({
+                id: existingId,
+                actual_amount: data.actual,
+                // Include full context as in TargetPlanning to satisfy potential RLS/Constraints
+                customer_name: entry.customer_name,
+                branch_id: entry.branch, // normalized 'Bangalore' if it was 'Banglore'
+                Unit_name: entry.unit,
+                month: month,
+                year: currentFilters.year,
+                salesperson_id: entry.salesperson_id
+              });
+            }
           }
         });
       });
 
       if (recordsToUpsert.length === 0) {
-        toast.info('No values to update');
+        toast.info('No valid records to update');
+        setDirtyCells(new Set());
         return;
       }
 
@@ -237,10 +254,11 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
       if (error) throw error;
 
       toast.success('Actuals committed to Sales Database');
+      setDirtyCells(new Set());
       fetchData();
     } catch (error) {
       console.error('Save Error:', error);
-      toast.error('Failed to commit updates');
+      toast.error(`Failed to commit updates: ${error instanceof Error ? error.message : 'Unknown Error'}`);
     } finally {
       setLoading(false);
     }
