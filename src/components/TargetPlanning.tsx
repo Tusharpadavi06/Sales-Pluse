@@ -244,9 +244,9 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
   }, []);
 
   useEffect(() => {
-    // fetchData will run when filters or employees change
+    // fetchData will run when filters or employees change (excluding search filters to preserve dirty edits)
     fetchData();
-  }, [filters, employees]); 
+  }, [filters.branch, filters.unit, filters.year, filters.employee, employees]); 
 
   const addRow = () => {
     setRows([...rows, { 
@@ -279,12 +279,13 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     setRows(rows.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
 
-  const updateMonthlyValue = (rowId: string, month: string, value: number) => {
+  const updateMonthlyValue = (rowId: string, month: string, valueStr: string) => {
+    const val = valueStr === '' ? '' : (parseInt(valueStr) || 0);
     setRows(rows.map(r => {
       if (r.id === rowId) {
         return {
           ...r,
-          monthly_targets: { ...r.monthly_targets, [month]: value }
+          monthly_targets: { ...r.monthly_targets, [month]: val }
         };
       }
       return r;
@@ -335,7 +336,8 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       rows.forEach(r => {
         r.customer_name = r.customer_name.trim();
         MONTHS.forEach(m => {
-          const val = r.monthly_targets[m];
+          const rawVal = r.monthly_targets[m];
+          const val = (rawVal as any) === '' ? 0 : (Number(rawVal) || 0);
           
           const payload: any = {
             customer_name: r.customer_name,
@@ -370,8 +372,16 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         }
         
         if (updates.length > 0) {
-          const { error: upsError } = await supabase.from('Sales_database').upsert(updates, { onConflict: 'id' });
-          if (upsError) throw upsError;
+          const updatePromises = updates.map((record: any) => {
+            const { id, ...patch } = record;
+            return supabase
+              .from('Sales_database')
+              .update(patch)
+              .eq('id', id);
+          });
+          const results = await Promise.all(updatePromises);
+          const failedResult = results.find(r => r.error);
+          if (failedResult) throw failedResult.error;
         }
       }
 
@@ -656,10 +666,10 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                           <input 
                             type="number"
                             className="w-full text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums h-6"
-                            value={row.monthly_targets[m]}
+                            value={row.monthly_targets[m] === undefined || row.monthly_targets[m] === null ? '' : row.monthly_targets[m]}
                             spellCheck={false}
                             data-gramm="false"
-                            onChange={e => updateMonthlyValue(row.id, m, parseInt(e.target.value) || 0)}
+                            onChange={e => updateMonthlyValue(row.id, m, e.target.value)}
                           />
                         </div>
                       </td>

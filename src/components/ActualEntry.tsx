@@ -152,7 +152,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           
           groupedRows[key].monthData[record.month].target += Number(record.target_amount) || 0;
           groupedRows[key].monthData[record.month].actual += Number(record.actual_amount) || 0;
-          groupedRows[key].monthData[record.month].gap = Math.max(0, groupedRows[key].monthData[record.month].target - groupedRows[key].monthData[record.month].actual);
+          groupedRows[key].monthData[record.month].gap = groupedRows[key].monthData[record.month].actual - groupedRows[key].monthData[record.month].target;
         });
 
         const finalEntries = Object.values(groupedRows).map(row => {
@@ -192,19 +192,21 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
 
   useEffect(() => {
     fetchData();
-  }, [filters, employees]);
+  }, [filters.branch, filters.unit, filters.year, filters.employee, employees]);
 
-  const updateActual = (rowId: string, month: string, value: number) => {
+  const updateActual = (rowId: string, month: string, valueStr: string) => {
     setDirtyCells(prev => new Set(prev).add(`${rowId}-${month}`));
+    const parsedVal = valueStr === '' ? '' : (parseFloat(valueStr) || 0);
     setEntries(prev => prev.map(entry => {
       if (entry.id === rowId) {
         const currentData = entry.monthData[month];
-        const newGap = Math.max(0, currentData.target - value);
+        const numericVal = parsedVal === '' ? 0 : parsedVal;
+        const newGap = numericVal - currentData.target;
         return {
           ...entry,
           monthData: {
             ...entry.monthData,
-            [month]: { ...currentData, actual: value, gap: newGap }
+            [month]: { ...currentData, actual: parsedVal, gap: newGap }
           }
         };
       }
@@ -220,38 +222,50 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
 
     setLoading(true);
     try {
-      const recordsToUpsert: any[] = [];
+      const updatePromises: any[] = [];
       
       entries.forEach(entry => {
         Object.entries(entry.monthData).forEach(([month, data]: [string, any]) => {
           if (dirtyCells.has(`${entry.id}-${month}`)) {
             const existingId = data.record_id;
+            const amountValue = Number(data.actual) || 0;
             if (existingId && String(existingId).length > 5) {
-              recordsToUpsert.push({
-                id: existingId,
-                actual_amount: data.actual,
-                // Include full context as in TargetPlanning to satisfy potential RLS/Constraints
-                customer_name: entry.customer_name,
-                branch_id: entry.branch, // normalized 'Bangalore' if it was 'Banglore'
-                Unit_name: entry.unit,
-                month: month,
-                year: currentFilters.year,
-                salesperson_id: entry.salesperson_id
-              });
+              const updatePromise = supabase
+                .from('Sales_database')
+                .update({ actual_amount: amountValue })
+                .eq('id', existingId);
+              updatePromises.push(updatePromise);
+            } else {
+              const insertPromise = supabase
+                .from('Sales_database')
+                .insert({
+                  customer_name: entry.customer_name,
+                  Unit_name: entry.unit,
+                  month: month,
+                  year: currentFilters.year,
+                  actual_amount: amountValue,
+                  target_amount: 0,
+                  branch_id: entry.branch,
+                  salesperson_id: entry.salesperson_id
+                });
+              updatePromises.push(insertPromise);
             }
           }
         });
       });
 
-      if (recordsToUpsert.length === 0) {
+      if (updatePromises.length === 0) {
         toast.info('No valid records to update');
         setDirtyCells(new Set());
         return;
       }
 
-      // Upserting into Sales_database for actual_amount update
-      const { error } = await supabase.from('Sales_database').upsert(recordsToUpsert, { onConflict: 'id' });
-      if (error) throw error;
+      const results = await Promise.all(updatePromises);
+      
+      const failed = results.find(r => r.error);
+      if (failed) {
+        throw failed.error;
+      }
 
       toast.success('Actuals committed to Sales Database');
       setDirtyCells(new Set());
@@ -272,7 +286,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
     return acc + Object.values(e.monthData).reduce((sum: number, m: any) => sum + m.actual, 0);
   }, 0);
 
-  const totalGap = Math.max(0, totalPlanned - aggregateActual);
+  const totalGap = totalPlanned === 0 && aggregateActual === 0 ? 0 : (aggregateActual - totalPlanned);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
@@ -446,23 +460,23 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                                 type="number"
                                 className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
                                 placeholder={formatCurrency(data.target)}
-                                value={data.actual || ''}
+                                value={data.actual === undefined || data.actual === null ? '' : data.actual}
                                 spellCheck={false}
                                 data-gramm="false"
-                                onChange={e => updateActual(entry.id, month, parseFloat(e.target.value) || 0)}
+                                onChange={e => updateActual(entry.id, month, e.target.value)}
                               />
                             </div>
-
+                            
                             <div className={cn(
                               "flex items-center justify-between px-3 py-1.5 rounded-lg border border-dashed",
-                              data.gap > 0 ? "bg-red-50 border-red-100" : "bg-green-50 border-green-100"
+                              data.gap > 0 ? "bg-green-50 border-green-100" : (data.gap < 0 ? "bg-red-50 border-red-100" : "bg-zinc-50 border-zinc-100")
                             )}>
                               <span className="text-[9px] font-black text-zinc-500 uppercase">GAP</span>
                               <span className={cn(
                                 "text-[10px] font-black tabular-nums",
-                                data.gap > 0 ? "text-red-500" : "text-green-600"
+                                data.gap > 0 ? "text-green-600" : (data.gap < 0 ? "text-red-500" : "text-zinc-600")
                               )}>
-                                {data.gap > 0 ? `+${formatCurrency(data.gap)}` : 'MATCHED'}
+                                {data.gap > 0 ? `+${formatCurrency(data.gap)}` : (data.gap < 0 ? `-${formatCurrency(Math.abs(data.gap))}` : formatCurrency(0))}
                               </span>
                             </div>
                           </div>
@@ -493,15 +507,15 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           <div className="flex flex-col items-end gap-2 text-right">
              <p className={cn(
                "text-[10px] font-black uppercase tracking-widest flex items-center gap-2",
-               totalGap > 0 ? "text-red-500" : "text-green-500"
+               totalGap < 0 ? "text-red-500" : "text-green-500"
              )}>
-               {totalGap > 0 ? <AlertCircle className="h-3 w-3" /> : null} 
-               {totalGap > 0 ? "Critical Pipeline Gap" : "Target Achieved"}
+               {totalGap < 0 ? <AlertCircle className="h-3 w-3" /> : null} 
+               {totalGap < 0 ? "Critical Pipeline Gap" : "Target Achieved"}
              </p>
              <p className={cn(
                "text-3xl font-black italic tracking-tighter",
-               totalGap > 0 ? "text-red-500" : "text-green-500"
-             )}>{formatCurrency(totalGap)}</p>
+               totalGap < 0 ? "text-red-500" : "text-green-500"
+             )}>{totalGap > 0 ? `+${formatCurrency(totalGap)}` : (totalGap < 0 ? `-${formatCurrency(Math.abs(totalGap))}` : formatCurrency(0))}</p>
           </div>
         </div>
       </Card>
