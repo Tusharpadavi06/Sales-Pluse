@@ -146,13 +146,18 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
               target: 0,
               actual: 0,
               gap: 0,
-              record_id: record.id // Store first ID
+              record_id: record.id, // Store first ID
+              all_record_ids: []
             };
           }
           
           groupedRows[key].monthData[record.month].target += Number(record.target_amount) || 0;
           groupedRows[key].monthData[record.month].actual += Number(record.actual_amount) || 0;
           groupedRows[key].monthData[record.month].gap = groupedRows[key].monthData[record.month].actual - groupedRows[key].monthData[record.month].target;
+          if (!groupedRows[key].monthData[record.month].all_record_ids) {
+            groupedRows[key].monthData[record.month].all_record_ids = [];
+          }
+          groupedRows[key].monthData[record.month].all_record_ids.push(record.id);
         });
 
         const finalEntries = Object.values(groupedRows).map(row => {
@@ -223,18 +228,29 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
     setLoading(true);
     try {
       const updatePromises: any[] = [];
+      const idsToDelete: string[] = [];
       
       entries.forEach(entry => {
         Object.entries(entry.monthData).forEach(([month, data]: [string, any]) => {
           if (dirtyCells.has(`${entry.id}-${month}`)) {
             const existingId = data.record_id;
             const amountValue = Number(data.actual) || 0;
+            const targetValue = Number(data.target) || 0;
+            
             if (existingId && String(existingId).length > 5) {
               const updatePromise = supabase
                 .from('Sales_database')
-                .update({ actual_amount: amountValue })
+                .update({ 
+                  actual_amount: amountValue,
+                  target_amount: targetValue
+                })
                 .eq('id', existingId);
               updatePromises.push(updatePromise);
+
+              // Gather duplicate IDs to delete
+              const allIds = data.all_record_ids || [];
+              const duplicates = allIds.filter((id: string) => id !== existingId && id && String(id).length > 5);
+              idsToDelete.push(...duplicates);
             } else {
               const insertPromise = supabase
                 .from('Sales_database')
@@ -244,7 +260,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                   month: month,
                   year: currentFilters.year,
                   actual_amount: amountValue,
-                  target_amount: 0,
+                  target_amount: targetValue,
                   branch_id: entry.branch,
                   salesperson_id: entry.salesperson_id
                 });
@@ -265,6 +281,14 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
       const failed = results.find(r => r.error);
       if (failed) {
         throw failed.error;
+      }
+
+      if (idsToDelete.length > 0) {
+        const { error: delError } = await supabase
+          .from('Sales_database')
+          .delete()
+          .in('id', idsToDelete);
+        if (delError) console.error('Error cleaning up actual duplicates:', delError);
       }
 
       toast.success('Actuals committed to Sales Database');

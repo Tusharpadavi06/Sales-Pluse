@@ -26,7 +26,9 @@ interface TargetRow {
   unit: string;
   year: string;
   monthly_targets: MonthlyTarget;
+  monthly_actuals?: MonthlyTarget;
   record_ids?: Record<string, string>;
+  all_record_ids?: Record<string, string[]>;
   salesperson_id: string;
 }
 
@@ -82,6 +84,9 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     setFilters(newFilters);
   };
   
+  // Keep track of the initial loaded records to compare and only update values that actually changed
+  const [initialRows, setInitialRows] = useState<any[]>([]);
+
   // Derived state for display rows with search filtering
   const displayRows = rows.filter(r => 
     (r.customer_name || '').toLowerCase().includes((filters.customer || '').toLowerCase())
@@ -206,15 +211,25 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               unit: record.Unit_name,
               year: record.year,
               monthly_targets: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
+              monthly_actuals: MONTHS.reduce((acc, m) => ({ ...acc, [m]: 0 }), {}),
               record_ids: {},
+              all_record_ids: {},
               salesperson_id: sid
             };
           }
           groupedRows[key].monthly_targets[record.month] = (groupedRows[key].monthly_targets[record.month] || 0) + (Number(record.target_amount) || 0);
+          if (groupedRows[key].monthly_actuals) {
+            groupedRows[key].monthly_actuals[record.month] = (groupedRows[key].monthly_actuals[record.month] || 0) + (Number(record.actual_amount) || 0);
+          }
           if (!groupedRows[key].record_ids) groupedRows[key].record_ids = {};
           if (!groupedRows[key].record_ids[record.month]) {
             groupedRows[key].record_ids[record.month] = record.id;
           }
+          if (!groupedRows[key].all_record_ids) groupedRows[key].all_record_ids = {};
+          if (!groupedRows[key].all_record_ids[record.month]) {
+            groupedRows[key].all_record_ids[record.month] = [];
+          }
+          groupedRows[key].all_record_ids[record.month].push(record.id);
         });
 
         // Sort rows by customer name alphabetically
@@ -223,6 +238,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         );
         
         setRows(finalRows);
+        setInitialRows(JSON.parse(JSON.stringify(finalRows)));
 
         // Cascading Units
         if (currentFilters.unit === 'All') {
@@ -332,34 +348,73 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     setLoading(true);
     try {
       const recordsToUpsert: any[] = [];
+      const idsToDelete: string[] = [];
       
       rows.forEach(r => {
-        r.customer_name = r.customer_name.trim();
+        r.customer_name = (r.customer_name || '').trim();
+        const initialRow = initialRows.find(ir => ir.id === r.id);
+
+        // Checks if metadata (row key identifiers) changed
+        const hasMetaChanged = !initialRow || 
+          initialRow.customer_name !== r.customer_name ||
+          initialRow.unit !== r.unit ||
+          initialRow.salesperson_id !== r.salesperson_id ||
+          initialRow.branch !== r.branch;
+
         MONTHS.forEach(m => {
           const rawVal = r.monthly_targets[m];
           const val = (rawVal as any) === '' ? 0 : (Number(rawVal) || 0);
           
-          const payload: any = {
-            customer_name: r.customer_name,
-            Unit_name: r.unit,
-            month: m,
-            year: r.year || currentFilters.year,
-            target_amount: val,
-            branch_id: r.branch,
-            salesperson_id: r.salesperson_id
-          };
-          
+          const initialRawVal = initialRow?.monthly_targets?.[m];
+          const initialVal = (initialRawVal as any) === '' ? 0 : (Number(initialRawVal) || 0);
+
+          // We only update if the metadata (customer, unit, salesperson, branch) has changed,
+          // OR if the target value for this month has changed compared to initial load.
+          const isModified = hasMetaChanged || val !== initialVal;
+
           const existingId = r.record_ids?.[m];
-          if (existingId && existingId !== 'null' && existingId !== 'undefined' && String(existingId).length > 5) {
-            payload.id = existingId;
+
+          if (isModified) {
+            const payload: any = {
+              customer_name: r.customer_name,
+              Unit_name: r.unit,
+              month: m,
+              year: r.year || currentFilters.year,
+              target_amount: val,
+              actual_amount: r.monthly_actuals?.[m] || 0,
+              branch_id: r.branch,
+              salesperson_id: r.salesperson_id
+            };
+            
+            if (existingId && existingId !== 'null' && existingId !== 'undefined' && String(existingId).length > 5) {
+              payload.id = existingId;
+            }
+            
+            // Only push if there is actual target value or we are specifically updating/clearing an existing record
+            if (val > 0 || payload.id) {
+              recordsToUpsert.push(payload);
+            }
           }
-          
-          // Only push if there is actual target value or we are specifically updating an existing record
-          if (val > 0 || (payload.id)) {
-            recordsToUpsert.push(payload);
+
+          // Gather target duplicates to clean up if we have them
+          if (existingId) {
+            const allIds = r.all_record_ids?.[m] || [];
+            const duplicates = allIds.filter((id: string) => id !== existingId && id && String(id).length > 5);
+            idsToDelete.push(...duplicates);
           }
         });
       });
+
+      // Internal helper to limit concurrent HTTP connections
+      const executeInBatches = async (tasks: (() => Promise<any>)[], batchSize = 15) => {
+        const results = [];
+        for (let i = 0; i < tasks.length; i += batchSize) {
+          const batch = tasks.slice(i, i + batchSize);
+          const batchResults = await Promise.all(batch.map(fn => fn()));
+          results.push(...batchResults);
+        }
+        return results;
+      };
 
       if (recordsToUpsert.length > 0) {
         // Separate inserts and updates to avoid "null value in column id" errors with mixed upserts
@@ -372,24 +427,53 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
         }
         
         if (updates.length > 0) {
-          const updatePromises = updates.map((record: any) => {
-            const { id, ...patch } = record;
-            return supabase
-              .from('Sales_database')
-              .update(patch)
-              .eq('id', id);
+          const updateTasks = updates.map((record: any) => {
+            return async () => {
+              const { id, ...patch } = record;
+              const updatePayload = {
+                target_amount: patch.target_amount,
+                actual_amount: patch.actual_amount,
+                customer_name: patch.customer_name,
+                Unit_name: patch.Unit_name,
+                salesperson_id: patch.salesperson_id,
+                branch_id: patch.branch_id
+              };
+              return supabase
+                .from('Sales_database')
+                .update(updatePayload)
+                .eq('id', id);
+            };
           });
-          const results = await Promise.all(updatePromises);
+          const results = await executeInBatches(updateTasks, 15);
           const failedResult = results.find(r => r.error);
           if (failedResult) throw failedResult.error;
         }
       }
 
-      toast.success('Targets committed to Sales Database');
+      if (idsToDelete.length > 0) {
+        const uniqueIdsToDelete = Array.from(new Set(idsToDelete));
+        const deleteTasks = [];
+        const batchSize = 100; // deletes can be larger batches
+        for (let i = 0; i < uniqueIdsToDelete.length; i += batchSize) {
+          const chunk = uniqueIdsToDelete.slice(i, i + batchSize);
+          deleteTasks.push(async () => {
+            return supabase
+              .from('Sales_database')
+              .delete()
+              .in('id', chunk);
+          });
+        }
+        const delResults = await executeInBatches(deleteTasks, 5);
+        const failedDel = delResults.find(r => r.error);
+        if (failedDel) console.error('Error cleaning up target duplicates:', failedDel.error);
+      }
+
+      toast.success('Targets committed to Sales Database successfully');
       fetchData();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Save Error:', error);
-      toast.error(`Save Error: ${error instanceof Error ? error.message : 'Check database connectivity'}`);
+      const errMsg = error?.message || error?.details || (typeof error === 'object' ? JSON.stringify(error) : String(error));
+      toast.error(`Save Error: ${errMsg}`);
     } finally {
       setLoading(false);
     }
