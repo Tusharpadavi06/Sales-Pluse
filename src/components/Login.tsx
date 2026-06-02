@@ -16,6 +16,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
 
   const BRANCH_LIST = BRANCHES;
 
@@ -148,6 +149,28 @@ export default function Login() {
     }
   };
 
+  const handleResetRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) {
+      toast.error('Please enter your email address');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/`,
+      });
+      if (error) throw error;
+      toast.success('Password recovery link sent! Please check your email inbox.');
+      setIsForgotPassword(false);
+    } catch (error: any) {
+      console.error('Reset request error:', error);
+      toast.error(error.message || 'Failed to send password recovery link.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 p-4 md:p-6 font-sans">
       <Card className="w-full max-w-xl shadow-2xl border-none rounded-3xl overflow-hidden bg-white">
@@ -168,135 +191,186 @@ export default function Login() {
             <span className="text-[10px] md:text-sm font-bold uppercase tracking-[0.2em] text-zinc-400">Professional Portal</span>
           </CardTitle>
           <CardDescription className="text-xs md:text-sm text-zinc-500 font-medium px-4">
-            {isSignUp ? 'Create your professional account' : 'Access your SalesPulse dashboard'}
+            {isForgotPassword 
+              ? 'Reset your SalesPulse password' 
+              : isSignUp 
+                ? 'Create your professional account' 
+                : 'Access your SalesPulse dashboard'}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-5 md:p-8 space-y-6">
-          <form onSubmit={handleAuth} className="space-y-4">
-            {isSignUp && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="firstName" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">First Name</Label>
-                    <div className="relative">
-                      <UserIcon className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-400" />
+          {isForgotPassword ? (
+            <form onSubmit={handleResetRequest} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="reset-email" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Email ID</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-400" />
+                  <Input
+                    id="reset-email"
+                    type="email"
+                    placeholder="name@ginzalimited.com"
+                    className="pl-11 h-12 bg-zinc-50 border-zinc-200 rounded-xl"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <Button type="submit" className="w-full h-12 bg-black hover:bg-zinc-800 text-white font-black rounded-xl shadow-lg mt-4 disabled:opacity-50 transition-all active:scale-[0.98]" disabled={loading}>
+                {loading ? 'Sending link...' : 'Send Password Recovery Link'}
+              </Button>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsForgotPassword(false)}
+                  className="text-xs font-bold text-zinc-400 hover:text-black hover:underline underline-offset-4"
+                >
+                  Cancel & Return to Sign In
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleAuth} className="space-y-4">
+              {isSignUp && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">First Name</Label>
+                      <div className="relative">
+                        <UserIcon className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-400" />
+                        <Input
+                          id="firstName"
+                          type="text"
+                          placeholder="John"
+                          className="pl-11 h-12 bg-zinc-50 border-zinc-200 rounded-xl"
+                          value={firstName}
+                          onChange={(e) => setFirstName(e.target.value)}
+                          required={isSignUp}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="surname" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Surname</Label>
                       <Input
-                        id="firstName"
+                        id="surname"
                         type="text"
-                        placeholder="John"
-                        className="pl-11 h-12 bg-zinc-50 border-zinc-200 rounded-xl"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
+                        placeholder="Doe"
+                        className="h-12 bg-zinc-50 border-zinc-200 rounded-xl"
+                        value={surname}
+                        onChange={(e) => setSurname(e.target.value)}
                         required={isSignUp}
                       />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="surname" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Surname</Label>
-                    <Input
-                      id="surname"
-                      type="text"
-                      placeholder="Doe"
-                      className="h-12 bg-zinc-50 border-zinc-200 rounded-xl"
-                      value={surname}
-                      onChange={(e) => setSurname(e.target.value)}
-                      required={isSignUp}
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Account Role</Label>
-                  <div className="grid grid-cols-3 gap-2 p-1 bg-zinc-50 rounded-xl">
-                    {(['Sales Person', 'Branch Head', 'Admin'] as UserRole[]).map((r) => (
-                      <button
-                        key={r}
-                        type="button"
-                        onClick={() => {
-                          setRole(r);
-                          setSelectedBranches([]);
-                        }}
-                        className={`py-2 px-1 text-[10px] font-black uppercase tracking-tight rounded-lg transition-all ${
-                          role === r ? 'bg-white shadow-sm text-black' : 'text-zinc-400 hover:bg-white/50'
-                        }`}
-                      >
-                        {r}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {role !== 'Admin' && (
                   <div className="space-y-2">
-                    <Label className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">
-                      {role === 'Sales Person' ? 'Assigned Branch' : 'Manage Branches'}
-                    </Label>
-                    <div className="flex flex-wrap gap-2 p-3 bg-zinc-50 rounded-xl max-h-32 overflow-y-auto border border-zinc-100">
-                      {BRANCH_LIST.map((branch) => (
+                    <Label className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Account Role</Label>
+                    <div className="grid grid-cols-3 gap-2 p-1 bg-zinc-50 rounded-xl">
+                      {(['Sales Person', 'Branch Head', 'Admin'] as UserRole[]).map((r) => (
                         <button
-                          key={branch}
+                          key={r}
                           type="button"
-                          onClick={() => toggleBranch(branch)}
-                          className={`px-3 py-1.5 text-[10px] font-bold rounded-full border transition-all ${
-                            selectedBranches.includes(branch)
-                              ? 'bg-black text-white border-black shadow-sm'
-                              : 'bg-white text-zinc-500 border-zinc-200 hover:border-black/50'
+                          onClick={() => {
+                            setRole(r);
+                            setSelectedBranches([]);
+                          }}
+                          className={`py-2 px-1 text-[10px] font-black uppercase tracking-tight rounded-lg transition-all ${
+                            role === r ? 'bg-white shadow-sm text-black' : 'text-zinc-400 hover:bg-white/50'
                           }`}
                         >
-                          {branch}
+                          {r}
                         </button>
                       ))}
                     </div>
                   </div>
-                )}
-              </>
-            )}
 
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Email ID</Label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-400" />
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="name@ginzalimited.com"
-                  className="pl-11 h-12 bg-zinc-50 border-zinc-200 rounded-xl"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+                  {role !== 'Admin' && (
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">
+                        {role === 'Sales Person' ? 'Assigned Branch' : 'Manage Branches'}
+                      </Label>
+                      <div className="flex flex-wrap gap-2 p-3 bg-zinc-50 rounded-xl max-h-32 overflow-y-auto border border-zinc-100">
+                        {BRANCH_LIST.map((branch) => (
+                          <button
+                            key={branch}
+                            type="button"
+                            onClick={() => toggleBranch(branch)}
+                            className={`px-3 py-1.5 text-[10px] font-bold rounded-full border transition-all ${
+                              selectedBranches.includes(branch)
+                                ? 'bg-black text-white border-black shadow-sm'
+                                : 'bg-white text-zinc-500 border-zinc-200 hover:border-black/50'
+                            }`}
+                          >
+                            {branch}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Email ID</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-400" />
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="name@ginzalimited.com"
+                    className="pl-11 h-12 bg-zinc-50 border-zinc-200 rounded-xl"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-400" />
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  className="pl-11 h-12 bg-zinc-50 border-zinc-200 rounded-xl"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <Label htmlFor="password" className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Password</Label>
+                  {!isSignUp && (
+                    <button
+                      type="button"
+                      onClick={() => setIsForgotPassword(true)}
+                      className="text-[10px] font-bold text-zinc-400 hover:text-black hover:underline"
+                    >
+                      Forgot?
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-3.5 h-4 w-4 text-zinc-400" />
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    className="pl-11 h-12 bg-zinc-50 border-zinc-200 rounded-xl"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
-            </div>
 
-            <Button type="submit" className="w-full h-12 bg-black hover:bg-zinc-800 text-white font-black rounded-xl shadow-lg mt-4 disabled:opacity-50 transition-all active:scale-[0.98]" disabled={loading}>
-              {loading ? (isSignUp ? 'Creating Account...' : 'Signing in...') : (isSignUp ? 'Create Account' : 'Sign In')}
-            </Button>
-          </form>
+              <Button type="submit" className="w-full h-12 bg-black hover:bg-zinc-800 text-white font-black rounded-xl shadow-lg mt-4 disabled:opacity-50 transition-all active:scale-[0.98]" disabled={loading}>
+                {loading ? (isSignUp ? 'Creating Account...' : 'Signing in...') : (isSignUp ? 'Create Account' : 'Sign In')}
+              </Button>
+            </form>
+          )}
 
           <div className="text-center pt-2">
-            <button
-              onClick={() => setIsSignUp(!isSignUp)}
-              className="text-xs font-bold text-black hover:underline underline-offset-4"
-              type="button"
-            >
-              {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Create one'}
-            </button>
+            {!isForgotPassword && (
+              <button
+                onClick={() => setIsSignUp(!isSignUp)}
+                className="text-xs font-bold text-black hover:underline underline-offset-4"
+                type="button"
+              >
+                {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Create one'}
+              </button>
+            )}
           </div>
         </CardContent>
       </Card>

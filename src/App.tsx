@@ -13,11 +13,23 @@ import Sidebar from '@/src/components/Sidebar';
 import Dashboard from '@/src/components/Dashboard';
 import TargetPlanning from '@/src/components/TargetPlanning';
 import ActualEntry from '@/src/components/ActualEntry';
+import ResetPassword from '@/src/components/ResetPassword';
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  // Initialize recovery mode synchronously to capture URL hash/query before Supabase client can clear it
+  const [isRecoveryMode, setIsRecoveryMode] = useState<boolean>(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
+    const search = typeof window !== 'undefined' ? window.location.search || '' : '';
+    return hash.includes('type=recovery') || 
+           search.includes('type=recovery') || 
+           hash.includes('recovery_token=') ||
+           search.includes('recovery_token=') || 
+           search.includes('code='); // Safe fallback check for Supabase PKCE recovery code
+  });
 
   // Persistent States for Tabs
   const [targetRows, setTargetRows] = useState<any[]>([]);
@@ -34,6 +46,12 @@ export default function App() {
   });
 
   useEffect(() => {
+    // Check if the URL hash contains password recovery tokens
+    const hash = window.location.hash || '';
+    if (hash.includes('type=recovery') || window.location.search.includes('type=recovery')) {
+      setIsRecoveryMode(true);
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
@@ -43,7 +61,10 @@ export default function App() {
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecoveryMode(true);
+      }
       setSession(session);
       if (session?.user) {
         fetchProfile(session.user.id);
@@ -95,6 +116,24 @@ export default function App() {
           <p className="text-xs font-black uppercase tracking-widest text-zinc-400">Loading SalesPulse...</p>
         </div>
       </div>
+    );
+  }
+
+  if (isRecoveryMode) {
+    return (
+      <>
+        <ResetPassword 
+          onComplete={async () => {
+            setIsRecoveryMode(false);
+            const { data: { session } } = await supabase.auth.getSession();
+            setSession(session);
+            if (session?.user) {
+              await fetchProfile(session.user.id);
+            }
+          }} 
+        />
+        <Toaster position="top-center" richColors />
+      </>
     );
   }
 
