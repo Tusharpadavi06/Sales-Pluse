@@ -150,7 +150,7 @@ export default function App() {
     <BrowserRouter>
       <div className="flex min-h-screen bg-zinc-50 font-sans text-zinc-900">
         <Sidebar user={profile} />
-        <main className="flex-1 p-8 max-w-7xl mx-auto w-full">
+        <main className="flex-1 min-w-0 p-8">
           <Routes>
             <Route 
               path="/" 

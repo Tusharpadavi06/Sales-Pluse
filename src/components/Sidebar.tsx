@@ -30,13 +30,16 @@ export default function Sidebar({ user }: SidebarProps) {
 
   return (
     <aside className="w-64 bg-white border-r border-zinc-100 flex flex-col h-screen sticky top-0">
-      <div className="p-6 flex items-center gap-3 border-b border-zinc-50">
-        <div className="h-10 w-10 bg-black rounded-xl flex items-center justify-center text-white">
-          <BarChart3 className="h-6 w-6" />
-        </div>
-        <div>
-          <h1 className="font-black text-xl tracking-tighter leading-none italic">SalesPulse</h1>
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Ginza Ltd.</span>
+      <div className="p-4 flex flex-col items-center justify-center gap-3.5 border-b border-zinc-100 bg-zinc-50/50">
+        <img 
+          src="https://www.ginzalimited.com/cdn/shop/files/Ginza_logo.jpg?v=1668509673&width=800" 
+          alt="GINZA Logo" 
+          className="w-52 h-24 object-contain rounded-xl shadow-sm border border-zinc-200 bg-white p-1.5"
+          referrerPolicy="no-referrer"
+        />
+        <div className="text-center">
+          <h1 className="font-black text-xl tracking-tighter text-zinc-900 leading-none">Sales Pulse</h1>
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 mt-1.5 block">Ginza Ltd.</span>
         </div>
       </div>
 

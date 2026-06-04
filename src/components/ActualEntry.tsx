@@ -17,7 +17,7 @@ interface ActualEntryProps {
 
 interface EntryCell {
   target: number;
-  actual: number;
+  actual: string | number;
   gap: number;
 }
 
@@ -37,13 +37,13 @@ export const computeMonthDataForEntry = (entry: any) => {
 
   for (let i = 0; i < MONTHS.length; i++) {
     const month = MONTHS[i];
-    const data = entry.monthData[month] || { target: 0, actual: 0, gap: 0, record_id: null };
+    const data = entry.monthData[month] || { target: 0, actual: '', gap: 0, record_id: null };
     
     const originalTarget = Number(data.target) || 0;
     const actualRaw = data.actual;
     
-    // Check if actual is entered (not blank, null, or undefined)
-    const isActualEntered = actualRaw !== undefined && actualRaw !== null && actualRaw !== '';
+    // Check if actual is entered (not blank, null, undefined, or 0)
+    const isActualEntered = actualRaw !== undefined && actualRaw !== null && actualRaw !== '' && Number(actualRaw) !== 0;
     const actualNum = isActualEntered ? Number(actualRaw) : 0;
     
     // Gap from previous month is carried over
@@ -61,7 +61,7 @@ export const computeMonthDataForEntry = (entry: any) => {
     computedMonthData[month] = {
       target: originalTarget,
       totalTarget: totalTarget,
-      actual: actualRaw,
+      actual: isActualEntered ? actualRaw : '',
       gap: gap,
       carryForward: carryForward,
       record_id: data.record_id,
@@ -75,6 +75,76 @@ export const computeMonthDataForEntry = (entry: any) => {
   return computedMonthData;
 };
 
+// Optimized cell input with local state to prevent render lag when typing
+function ActualCellInput({ 
+  value, 
+  placeholder, 
+  onChange, 
+  hasActual 
+}: { 
+  value: string | number; 
+  placeholder: string; 
+  onChange: (val: string) => void;
+  hasActual: boolean;
+}) {
+  const [localVal, setLocalVal] = React.useState<string>(() => {
+    if (value === undefined || value === null || value === '' || Number(value) === 0) {
+      return '';
+    }
+    return String(value);
+  });
+  
+  const lastPropValue = React.useRef(value);
+
+  // Sync with prop when database is saved, filtered, or updated
+  React.useEffect(() => {
+    if (value !== lastPropValue.current) {
+      if (value === undefined || value === null || value === '' || Number(value) === 0) {
+        setLocalVal('');
+      } else {
+        setLocalVal(String(value));
+      }
+      lastPropValue.current = value;
+    }
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalVal(e.target.value);
+  };
+
+  const handleBlur = () => {
+    if (String(value ?? '') !== localVal && !(localVal === '' && (value === undefined || value === null || Number(value) === 0))) {
+      onChange(localVal);
+      lastPropValue.current = localVal;
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
+  return (
+    <Input 
+      type="number"
+      className={cn(
+        "h-10 px-2.5 text-[11px] tabular-nums rounded-lg border-zinc-300 transition-colors pt-1.5",
+        hasActual 
+          ? "bg-yellow-100 border-yellow-400 text-black font-black focus:bg-yellow-50 focus:border-yellow-500 shadow-sm" 
+          : "font-bold text-zinc-800"
+      )}
+      placeholder={placeholder}
+      value={localVal}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+      spellCheck={false}
+      data-gramm="false"
+    />
+  );
+}
+
 export default function ActualEntry({ user, entries, setEntries, filters, setFilters }: ActualEntryProps) {
   const [loading, setLoading] = useState(false);
   const [dirtyCells, setDirtyCells] = useState<Set<string>>(new Set());
@@ -87,19 +157,6 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   };
   
   const [employees, setEmployees] = useState<Profile[]>([]);
-  const [filterMetadata, setFilterMetadata] = useState<any[]>([]);
-
-  const fetchFilterMetadata = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('Sales_database')
-        .select('branch_id, Unit_name, salesperson_id');
-      if (error) throw error;
-      if (data) setFilterMetadata(data);
-    } catch (err) {
-      console.error('Error fetching filter metadata:', err);
-    }
-  };
 
   const displayEntries = entries.filter(e => 
     (e.customer_name || '').toLowerCase().includes((filters.customer || '').toLowerCase())
@@ -198,7 +255,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           if (!groupedRows[key].monthData[record.month]) {
             groupedRows[key].monthData[record.month] = {
               target: 0,
-              actual: 0,
+              actual: '',
               gap: 0,
               record_id: record.id, // Store first ID
               all_record_ids: []
@@ -206,8 +263,15 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           }
           
           groupedRows[key].monthData[record.month].target += Number(record.target_amount) || 0;
-          groupedRows[key].monthData[record.month].actual += Number(record.actual_amount) || 0;
-          groupedRows[key].monthData[record.month].gap = groupedRows[key].monthData[record.month].actual - groupedRows[key].monthData[record.month].target;
+          
+          const recordActual = record.actual_amount;
+          if (recordActual !== null && recordActual !== undefined && recordActual !== '') {
+            const currentActualVal = groupedRows[key].monthData[record.month].actual;
+            const currentNum = currentActualVal === '' ? 0 : Number(currentActualVal);
+            const sumVal = currentNum + Number(recordActual);
+            groupedRows[key].monthData[record.month].actual = sumVal === 0 ? '' : sumVal;
+          }
+          
           if (!groupedRows[key].monthData[record.month].all_record_ids) {
             groupedRows[key].monthData[record.month].all_record_ids = [];
           }
@@ -217,7 +281,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
         const finalEntries = Object.values(groupedRows).map(row => {
           MONTHS.forEach(m => {
             if (!row.monthData[m]) {
-              row.monthData[m] = { target: 0, actual: 0, gap: 0, record_id: null };
+              row.monthData[m] = { target: 0, actual: '', gap: 0, record_id: null };
             }
           });
           return row;
@@ -246,26 +310,27 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
 
   useEffect(() => {
     fetchEmployees();
-    fetchFilterMetadata();
-  }, [currentFilters.branch]);
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, [filters.branch, filters.unit, filters.year, filters.employee, employees]);
+  }, [filters.branch, filters.unit, filters.year, filters.employee]);
 
   const updateActual = (rowId: string, month: string, valueStr: string) => {
-    setDirtyCells(prev => new Set(prev).add(`${rowId}-${month}`));
-    const parsedVal = valueStr === '' ? '' : (parseFloat(valueStr) || 0);
+    setDirtyCells(prev => {
+      const nextSet = new Set(prev);
+      nextSet.add(`${rowId}-${month}`);
+      return nextSet;
+    });
+    const parsedVal = valueStr === '' ? '' : valueStr;
     setEntries(prev => prev.map(entry => {
       if (entry.id === rowId) {
         const currentData = entry.monthData[month];
-        const numericVal = parsedVal === '' ? 0 : parsedVal;
-        const newGap = numericVal - currentData.target;
         return {
           ...entry,
           monthData: {
             ...entry.monthData,
-            [month]: { ...currentData, actual: parsedVal, gap: newGap }
+            [month]: { ...currentData, actual: parsedVal }
           }
         };
       }
@@ -288,7 +353,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
         Object.entries(entry.monthData).forEach(([month, data]: [string, any]) => {
           if (dirtyCells.has(`${entry.id}-${month}`)) {
             const existingId = data.record_id;
-            const amountValue = Number(data.actual) || 0;
+            const amountValue = (data.actual === '' || data.actual === undefined || data.actual === null) ? null : Number(data.actual);
             const targetValue = Number(data.target) || 0;
             
             if (existingId && String(existingId).length > 5) {
@@ -357,44 +422,47 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
   };
 
   const totalPlanned = entries.reduce((acc, e) => {
-    return acc + Object.values(e.monthData).reduce((sum: number, m: any) => sum + m.target, 0);
+    return acc + Object.values(e.monthData).reduce((sum: number, m: any) => sum + (Number(m.target) || 0), 0);
   }, 0);
 
   const aggregateActual = entries.reduce((acc, e) => {
-    return acc + Object.values(e.monthData).reduce((sum: number, m: any) => sum + m.actual, 0);
+    return acc + Object.values(e.monthData).reduce((sum: number, m: any) => {
+      const val = m.actual === '' || m.actual === undefined || m.actual === null ? 0 : Number(m.actual);
+      return sum + (isNaN(val) ? 0 : val);
+    }, 0);
   }, 0);
 
-  const totalGap = totalPlanned === 0 && aggregateActual === 0 ? 0 : (aggregateActual - totalPlanned);
+  const totalGap = (aggregateActual - totalPlanned);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
-      <header className="flex items-center justify-between bg-black text-white p-6 rounded-3xl shadow-xl shadow-black/10">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-white/10 rounded-2xl">
-            <TrendingUp className="h-6 w-6 text-white" />
+    <div className="space-y-4 animate-in fade-in duration-700">
+      <header className="flex items-center justify-between bg-black text-white py-3 px-5 rounded-2xl shadow-xl shadow-black/10">
+        <div className="flex items-center gap-3.5">
+          <div className="p-2 bg-white/10 rounded-xl">
+            <TrendingUp className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl font-black italic tracking-tighter">Monthly Pipeline Entry</h2>
-            <p className="text-white/50 text-xs font-bold uppercase tracking-widest">Fiscal Cycle: {currentFilters.year}</p>
+            <h2 className="text-lg font-black italic tracking-tighter leading-tight">Monthly Pipeline Entry</h2>
+            <p className="text-white/50 text-[10px] font-bold uppercase tracking-widest">Fiscal Cycle: {currentFilters.year}</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <Button onClick={handleSave} disabled={loading} className="bg-white text-black hover:bg-zinc-200 px-6 h-10 font-black gap-2">
-            <Save className="h-4 w-4" />
+        <div className="flex items-center gap-2">
+          <Button onClick={handleSave} disabled={loading} className="bg-white text-black hover:bg-zinc-200 px-4 h-9 text-xs font-black gap-1.5 rounded-lg">
+            <Save className="h-3.5 w-3.5" />
             {loading ? 'COMMITTING...' : 'COMMIT UPDATES'}
           </Button>
         </div>
       </header>
 
       {/* Master Filters - NEW */}
-      <Card className="rounded-2xl border-none shadow-sm bg-white overflow-hidden border border-zinc-100">
-        <CardContent className="p-4">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <Card className="rounded-2xl border-none shadow-sm bg-white border border-zinc-100">
+        <CardContent className="p-2.5">
+          <div className="flex flex-col md:flex-row md:flex-wrap lg:flex-nowrap items-stretch md:items-end gap-2.5">
             {(user.role === 'Admin' || user.role === 'Branch Head') && (
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Branch Context</label>
+              <div className="space-y-1 flex-1 min-w-[130px] md:max-w-[200px]">
+                <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Branch Context</label>
                 <select 
-                  className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                  className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.branch}
                   onChange={e => updateFilters({...currentFilters, branch: e.target.value, employee: 'All'})}
                 >
@@ -407,32 +475,22 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Unit Type</label>
+            <div className="space-y-1 flex-1 min-w-[130px] md:max-w-[180px]">
+              <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Unit Type</label>
               <select 
-                className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                 value={currentFilters.unit}
                 onChange={e => updateFilters({...currentFilters, unit: e.target.value})}
               >
                 <option value="All">All Units</option>
-                {UNITS
-                  .filter(u => {
-                    if (currentFilters.branch === 'All' && currentFilters.employee === 'All') return true;
-                    return filterMetadata.some(m => 
-                      (currentFilters.branch === 'All' || m.branch_id === currentFilters.branch) &&
-                      (currentFilters.employee === 'All' || m.salesperson_id === currentFilters.employee || 
-                       employees.find(e => e.id === currentFilters.employee)?.full_name === m.salesperson_id) &&
-                      m.Unit_name === u
-                    );
-                  })
-                  .map(u => <option key={u} value={u}>{u}</option>)}
+                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Fiscal Year</label>
+            <div className="space-y-1 flex-1 min-w-[100px] md:max-w-[120px]">
+              <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Fiscal Year</label>
               <select 
-                className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                 value={currentFilters.year}
                 onChange={e => updateFilters({...currentFilters, year: e.target.value})}
               >
@@ -442,10 +500,10 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
             </div>
 
             {(user.role === 'Admin' || user.role === 'Branch Head') && (
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Managed Staff</label>
+              <div className="space-y-1 flex-1 min-w-[130px] md:max-w-[180px]">
+                <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Managed Staff</label>
                 <select 
-                  className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                  className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.employee}
                   onChange={e => updateFilters({...currentFilters, employee: e.target.value})}
                 >
@@ -475,13 +533,13 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
               </div>
             )}
 
-            <div className="space-y-1 col-span-2 lg:col-span-1">
-              <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Search Customer</label>
+            <div className="space-y-1 flex-1 min-w-[160px]">
+              <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Search Customer</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
                 <Input 
                   placeholder="Filter entries..."
-                  className="h-10 pl-9 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
+                  className="h-9 pl-9 text-xs bg-zinc-50 border-zinc-150 rounded-lg font-bold"
                   value={filters.customer || ''}
                   onChange={e => updateFilters({...filters, customer: e.target.value})}
                 />
@@ -493,15 +551,15 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
 
       <Card className="border-none shadow-md overflow-hidden bg-white rounded-2xl border border-zinc-200/50">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[calc(100vh-320px)] border-b border-zinc-200">
             <table className="w-full border-collapse">
               <thead>
                 <tr className="bg-zinc-100 border-b-2 border-zinc-200">
-                  <th className="p-4 text-left text-xs font-black uppercase tracking-widest text-zinc-800 sticky left-0 bg-zinc-100 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] border-r border-zinc-200/85">
+                  <th className="p-4 text-left text-xs font-black uppercase tracking-widest text-zinc-800 sticky left-0 top-0 bg-zinc-100 z-30 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] border-r border-zinc-200/85">
                     Entity Context
                   </th>
                   {MONTHS.map(month => (
-                    <th key={month} className="p-4 text-center text-xs font-black uppercase tracking-wide min-w-[230px] text-zinc-800">
+                    <th key={month} className="p-4 text-center text-xs font-black uppercase tracking-wide min-w-[230px] text-zinc-800 sticky top-0 bg-zinc-100 z-20">
                       {month}
                     </th>
                   ))}
@@ -572,19 +630,11 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                                 )}>
                                   Actual Amount
                                 </label>
-                                <Input 
-                                  type="number"
-                                  className={cn(
-                                    "h-10 px-2.5 text-[11px] tabular-nums rounded-lg border-zinc-300 transition-colors pt-1.5",
-                                    hasActual 
-                                      ? "bg-yellow-100 border-yellow-400 text-black font-black focus:bg-yellow-50 focus:border-yellow-500 shadow-sm" 
-                                      : "font-bold text-zinc-800"
-                                  )}
+                                <ActualCellInput 
+                                  value={actualVal}
                                   placeholder={formatCurrency(totalTarget)}
-                                  value={actualVal === undefined || actualVal === null ? '' : actualVal}
-                                  spellCheck={false}
-                                  data-gramm="false"
-                                  onChange={e => updateActual(entry.id, month, e.target.value)}
+                                  hasActual={hasActual}
+                                  onChange={val => updateActual(entry.id, month, val)}
                                 />
                               </div>
                               
@@ -618,31 +668,37 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
         </CardContent>
       </Card>
       
-      <Card className="bg-zinc-900 text-white p-6 rounded-3xl border-none">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-8">
-            <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Total Planned</p>
-              <p className="text-2xl font-black italic tracking-tighter tabular-nums">{formatCurrency(totalPlanned)}</p>
+      <Card className="bg-zinc-950 text-white py-2 px-5 rounded-xl border border-zinc-900 shadow-lg">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-black uppercase text-zinc-500 tracking-wider">Total Planned:</span>
+              <span className="text-xs font-black tracking-tight text-white tabular-nums">{formatCurrency(totalPlanned)}</span>
             </div>
-            <div className="h-10 w-[1px] bg-zinc-800" />
-            <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Aggregate Actual</p>
-              <p className="text-2xl font-black italic tracking-tighter tabular-nums">{formatCurrency(aggregateActual)}</p>
+            <div className="hidden sm:block h-3 w-[1px] bg-zinc-800" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-black uppercase text-zinc-500 tracking-wider">Aggregate Actual:</span>
+              <span className="text-xs font-black tracking-tight text-white tabular-nums">{formatCurrency(aggregateActual)}</span>
+            </div>
+            <div className="hidden sm:block h-3 w-[1px] bg-zinc-800" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-black uppercase text-zinc-500 tracking-wider">Target Achieved:</span>
+              <span className={cn(
+                "text-xs font-black tracking-tight tabular-nums",
+                totalPlanned > 0 && aggregateActual >= totalPlanned ? "text-emerald-400" : "text-amber-400"
+              )}>
+                {totalPlanned > 0 ? ((aggregateActual / totalPlanned) * 100).toFixed(1) : '0.0'}%
+              </span>
             </div>
           </div>
-          <div className="flex flex-col items-end gap-2 text-right">
-             <p className={cn(
-               "text-[10px] font-black uppercase tracking-widest flex items-center gap-2",
-               totalGap < 0 ? "text-red-500" : "text-green-500"
-             )}>
-               {totalGap < 0 ? <AlertCircle className="h-3 w-3" /> : null} 
-               {totalGap < 0 ? "Critical Pipeline Gap" : "Target Achieved"}
-             </p>
-             <p className={cn(
-               "text-3xl font-black italic tracking-tighter",
-               totalGap < 0 ? "text-red-500" : "text-green-500"
-             )}>{totalGap > 0 ? `+${formatCurrency(totalGap)}` : (totalGap < 0 ? `-${formatCurrency(Math.abs(totalGap))}` : formatCurrency(0))}</p>
+          <div className="flex items-center gap-1.5 text-right">
+            <span className="text-[8px] font-black uppercase text-zinc-500 tracking-wider">Gap:</span>
+            <span className={cn(
+              "text-xs font-black tracking-tight tabular-nums",
+              totalGap < 0 ? "text-red-400" : "text-emerald-400"
+            )}>
+              {totalGap > 0 ? `+${formatCurrency(totalGap)}` : (totalGap < 0 ? `-${formatCurrency(Math.abs(totalGap))}` : formatCurrency(0))}
+            </span>
           </div>
         </div>
       </Card>

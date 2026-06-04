@@ -175,27 +175,24 @@ export default function Login() {
     <div className="min-h-screen flex flex-col items-center justify-center bg-zinc-50 p-4 md:p-6 font-sans">
       <Card className="w-full max-w-xl shadow-2xl border-none rounded-3xl overflow-hidden bg-white">
         <CardHeader className="space-y-4 text-center bg-zinc-50 pb-6 pt-8 md:pb-8 md:pt-10 border-b border-zinc-100">
-          <div className="mx-auto mb-2">
+          <div className="mx-auto mb-3 flex justify-center">
             <img 
-              src="https://www.ginzalimited.com/cdn/shop/files/Ginza_logo.png" 
+              src="https://www.ginzalimited.com/cdn/shop/files/Ginza_logo.jpg?v=1668509673&width=800" 
               alt="GINZA Logo" 
-              className="h-10 md:h-12 object-contain"
+              className="w-56 md:w-72 h-auto object-contain rounded-2xl shadow-lg border border-zinc-200/85 bg-white p-2"
               referrerPolicy="no-referrer"
             />
           </div>
-          <CardTitle className="text-xl md:text-2xl font-black tracking-tighter text-zinc-900 flex flex-col items-center gap-1">
-            <div className="flex items-center gap-2 text-black italic">
-              <BarChart3 className="h-6 w-6" />
-              <span>SalesPulse</span>
-            </div>
-            <span className="text-[10px] md:text-sm font-bold uppercase tracking-[0.2em] text-zinc-400">Professional Portal</span>
+          <CardTitle className="text-xl md:text-2xl font-black tracking-tight text-zinc-900 flex flex-col items-center gap-1">
+            <span className="text-black font-extrabold text-2xl md:text-3xl">Sales Pulse</span>
+            <span className="text-xs font-black uppercase tracking-[0.15em] text-zinc-400 mt-1">Ginza Ltd.</span>
           </CardTitle>
           <CardDescription className="text-xs md:text-sm text-zinc-500 font-medium px-4">
             {isForgotPassword 
-              ? 'Reset your SalesPulse password' 
+              ? 'Reset your Sales Pulse password' 
               : isSignUp 
                 ? 'Create your professional account' 
-                : 'Access your SalesPulse dashboard'}
+                : 'Access your Sales Pulse dashboard'}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-5 md:p-8 space-y-6">

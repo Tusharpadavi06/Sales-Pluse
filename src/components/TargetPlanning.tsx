@@ -308,6 +308,65 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
     }));
   };
 
+  // Optimized target cell input with local state to prevent render lag when typing
+  const TargetCellInput = ({ 
+    value, 
+    onChange 
+  }: { 
+    value: string | number; 
+    onChange: (val: string) => void;
+  }) => {
+    const [localVal, setLocalVal] = React.useState<string>(() => {
+      if (value === undefined || value === null || value === '' || Number(value) === 0) {
+        return '';
+      }
+      return String(value);
+    });
+    
+    const lastPropValue = React.useRef(value);
+
+    React.useEffect(() => {
+      if (value !== lastPropValue.current) {
+        if (value === undefined || value === null || value === '' || Number(value) === 0) {
+          setLocalVal('');
+        } else {
+          setLocalVal(String(value));
+        }
+        lastPropValue.current = value;
+      }
+    }, [value]);
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      setLocalVal(e.target.value);
+    };
+
+    const handleBlur = () => {
+      if (String(value ?? '') !== localVal && !(localVal === '' && (value === undefined || value === null || Number(value) === 0))) {
+        onChange(localVal);
+        lastPropValue.current = localVal;
+      }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        (e.target as HTMLInputElement).blur();
+      }
+    };
+
+    return (
+      <input 
+        type="number"
+        className="w-full text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums h-6"
+        value={localVal}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        spellCheck={false}
+        data-gramm="false"
+      />
+    );
+  };
+
   const handleReassign = async (rowId: string, newSalespersonId: string) => {
     const row = rows.find(r => r.id === rowId);
     if (!row) return;
@@ -568,14 +627,15 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       </header>
 
       {/* Master Filters */}
-      <Card className="rounded-2xl border-none shadow-sm bg-white overflow-hidden border border-zinc-100">
-        <CardContent className="p-4">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Master Filters - NEW */}
+      <Card className="rounded-2xl border-none shadow-sm bg-white border border-zinc-100">
+         <CardContent className="p-2.5">
+           <div className="flex flex-col md:flex-row md:flex-wrap lg:flex-nowrap items-stretch md:items-end gap-3">
             {(user.role === 'Admin' || user.role === 'Branch Head') && (
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Branch Context</label>
+              <div className="space-y-1 flex-1 min-w-[130px] md:max-w-[200px]">
+                <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Branch Context</label>
                 <select 
-                  className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                  className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.branch}
                   onChange={e => updateFilters({...currentFilters, branch: e.target.value, employee: 'All'})}
                 >
@@ -588,10 +648,10 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Unit Type</label>
+            <div className="space-y-1 flex-1 min-w-[130px] md:max-w-[180px]">
+              <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Unit Type</label>
               <select 
-                className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                 value={currentFilters.unit}
                 onChange={e => updateFilters({...currentFilters, unit: e.target.value})}
               >
@@ -611,10 +671,10 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               </select>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Fiscal Year</label>
+            <div className="space-y-1 flex-1 min-w-[100px] md:max-w-[120px]">
+              <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Fiscal Year</label>
               <select 
-                className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                 value={currentFilters.year}
                 onChange={e => updateFilters({...currentFilters, year: e.target.value})}
               >
@@ -624,10 +684,10 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
             </div>
 
             {(user.role === 'Admin' || user.role === 'Branch Head') && (
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Managed Staff</label>
+              <div className="space-y-1 flex-1 min-w-[130px] md:max-w-[180px]">
+                <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Managed Staff</label>
                 <select 
-                  className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
+                  className="w-full h-9 px-3 text-xs bg-zinc-50 border border-zinc-150 rounded-lg outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.employee}
                   onChange={e => updateFilters({...currentFilters, employee: e.target.value})}
                 >
@@ -657,13 +717,13 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               </div>
             )}
 
-            <div className="space-y-1 col-span-2 lg:col-span-1">
-              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Search Customer</label>
+            <div className="space-y-1 flex-1 min-w-[160px]">
+              <label className="text-[9px] font-black uppercase text-zinc-500 px-1">Search Customer</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
                 <Input 
                   placeholder="Filter by customer..."
-                  className="h-10 pl-9 text-xs bg-zinc-50 border-zinc-100 rounded-xl font-bold"
+                  className="h-9 pl-9 text-xs bg-zinc-50 border-zinc-150 rounded-lg font-bold"
                   value={filters.customer || ''}
                   onChange={e => updateFilters({...filters, customer: e.target.value})}
                 />
@@ -676,19 +736,19 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
       {/* Grid Planning Table */}
       <Card className="border-none shadow-2xl rounded-3xl overflow-hidden bg-white">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[calc(100vh-320px)] border-b border-zinc-200">
             <table className="w-full border-collapse">
               <thead>
                 <tr className="bg-zinc-900 text-white">
-                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest sticky left-0 bg-zinc-900 z-10 w-12 text-center">#</th>
-                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[200px]">Customer Name</th>
-                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[120px]">Unit</th>
+                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest sticky left-0 top-0 bg-zinc-900 z-30 w-12 text-center">#</th>
+                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[200px] sticky top-0 bg-zinc-900 z-20">Customer Name</th>
+                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[120px] sticky top-0 bg-zinc-900 z-20">Unit</th>
                   {MONTHS.map(m => (
-                    <th key={m} className="p-4 text-center text-[10px] font-black uppercase tracking-widest min-w-[140px]">
+                    <th key={m} className="p-4 text-center text-[10px] font-black uppercase tracking-widest min-w-[140px] sticky top-0 bg-zinc-900 z-20">
                       {m.substring(0, 3)}
                     </th>
                   ))}
-                  <th className="p-4 text-center text-[10px] font-black uppercase tracking-widest">Del</th>
+                  <th className="p-4 text-center text-[10px] font-black uppercase tracking-widest sticky top-0 bg-zinc-900 z-20">Del</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -747,13 +807,9 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
                       <td key={m} className="p-2 border-x border-zinc-50">
                         <div className="flex flex-col">
                           <span className="text-[8px] font-black text-zinc-300 uppercase self-start leading-none mb-0.5">Value</span>
-                          <input 
-                            type="number"
-                            className="w-full text-[11px] font-bold text-center border-b border-zinc-100 group-hover:border-zinc-300 bg-transparent focus:border-black focus:ring-0 outline-none tabular-nums h-6"
-                            value={row.monthly_targets[m] === undefined || row.monthly_targets[m] === null ? '' : row.monthly_targets[m]}
-                            spellCheck={false}
-                            data-gramm="false"
-                            onChange={e => updateMonthlyValue(row.id, m, e.target.value)}
+                          <TargetCellInput 
+                            value={row.monthly_targets[m]}
+                            onChange={val => updateMonthlyValue(row.id, m, val)}
                           />
                         </div>
                       </td>
