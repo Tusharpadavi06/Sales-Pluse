@@ -21,6 +21,60 @@ interface EntryCell {
   gap: number;
 }
 
+// Helper to chronologically compute carry-over gaps and adjusted targets for an entry
+export const computeMonthDataForEntry = (entry: any) => {
+  const computedMonthData: Record<string, {
+    target: number;
+    totalTarget: number;
+    actual: string | number;
+    gap: number;
+    carryForward: number;
+    record_id: any;
+    all_record_ids?: any[];
+  }> = {};
+
+  let prevGap = 0;
+
+  for (let i = 0; i < MONTHS.length; i++) {
+    const month = MONTHS[i];
+    const data = entry.monthData[month] || { target: 0, actual: 0, gap: 0, record_id: null };
+    
+    const originalTarget = Number(data.target) || 0;
+    const actualRaw = data.actual;
+    
+    // Check if actual is entered (not blank, null, or undefined)
+    const isActualEntered = actualRaw !== undefined && actualRaw !== null && actualRaw !== '';
+    const actualNum = isActualEntered ? Number(actualRaw) : 0;
+    
+    // Gap from previous month is carried over
+    const carryForward = prevGap;
+    
+    // Adjusted Target = Original Target - Carry Forward
+    // If the previous month had a negative gap (deficit), we subtract negative => add the deficit to this month's target.
+    // If the previous month had a positive gap (surplus), we subtract positive => reduce this month's target.
+    const totalTarget = originalTarget - carryForward;
+    
+    // New gap for this month - computed only if actual is physically entered.
+    // Otherwise, gap is neutral (0) and does not ripple to next month.
+    const gap = isActualEntered ? (actualNum - totalTarget) : 0;
+
+    computedMonthData[month] = {
+      target: originalTarget,
+      totalTarget: totalTarget,
+      actual: actualRaw,
+      gap: gap,
+      carryForward: carryForward,
+      record_id: data.record_id,
+      all_record_ids: data.all_record_ids
+    };
+
+    // Update prevGap for the next cell in sequence
+    prevGap = gap;
+  }
+
+  return computedMonthData;
+};
+
 export default function ActualEntry({ user, entries, setEntries, filters, setFilters }: ActualEntryProps) {
   const [loading, setLoading] = useState(false);
   const [dirtyCells, setDirtyCells] = useState<Set<string>>(new Set());
@@ -338,7 +392,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {(user.role === 'Admin' || user.role === 'Branch Head') && (
               <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Branch Context</label>
+                <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Branch Context</label>
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.branch}
@@ -354,7 +408,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
             )}
 
             <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Unit Type</label>
+              <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Unit Type</label>
               <select 
                 className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                 value={currentFilters.unit}
@@ -376,7 +430,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Fiscal Year</label>
+              <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Fiscal Year</label>
               <select 
                 className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                 value={currentFilters.year}
@@ -389,7 +443,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
 
             {(user.role === 'Admin' || user.role === 'Branch Head') && (
               <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Managed Staff</label>
+                <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Managed Staff</label>
                 <select 
                   className="w-full h-10 px-3 text-xs bg-zinc-50 border border-zinc-100 rounded-xl outline-none focus:ring-1 focus:ring-black appearance-none font-bold"
                   value={currentFilters.employee}
@@ -422,7 +476,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
             )}
 
             <div className="space-y-1 col-span-2 lg:col-span-1">
-              <label className="text-[10px] font-black uppercase text-zinc-400 px-1">Search Customer</label>
+              <label className="text-[10px] font-black uppercase text-zinc-700 px-1">Search Customer</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
                 <Input 
@@ -437,78 +491,127 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
         </CardContent>
       </Card>
 
-      <Card className="border-none shadow-sm overflow-hidden">
+      <Card className="border-none shadow-md overflow-hidden bg-white rounded-2xl border border-zinc-200/50">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-zinc-50/80 border-b border-zinc-100">
-                  <th className="p-4 text-left text-[10px] font-black uppercase text-zinc-400 tracking-widest sticky left-0 bg-zinc-50 z-10">Entity Context</th>
+                <tr className="bg-zinc-100 border-b-2 border-zinc-200">
+                  <th className="p-4 text-left text-xs font-black uppercase tracking-widest text-zinc-800 sticky left-0 bg-zinc-100 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] border-r border-zinc-200/85">
+                    Entity Context
+                  </th>
                   {MONTHS.map(month => (
-                    <th key={month} className="p-4 text-center text-[10px] font-black uppercase tracking-widest min-w-[220px] text-zinc-400">
+                    <th key={month} className="p-4 text-center text-xs font-black uppercase tracking-wide min-w-[230px] text-zinc-800">
                       {month}
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-50">
-                {displayEntries.map((entry) => (
-                  <tr key={entry.id} className="hover:bg-zinc-50/30 transition-colors group">
-                    <td className="p-4 sticky left-0 bg-white shadow-[2px_0_10px_-4px_rgba(0,0,0,0.1)] z-10">
-                      <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer_name}</p>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[10px] font-bold text-zinc-400 flex items-center gap-1">
-                          <AlertCircle className="h-2 w-2" /> {entry.unit}
-                        </span>
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded uppercase">
-                          {employees.find(e => e.id === entry.salesperson_id || e.full_name === entry.salesperson_id)?.full_name || entry.salesperson_id || 'Unassigned'}
-                        </span>
-                        <span className="text-[10px] font-bold text-zinc-300 italic">@{entry.branch}</span>
-                      </div>
-                    </td>
-                    
-                    {MONTHS.map(month => {
-                      const data = entry.monthData[month] || { target: 0, actual: 0, gap: 0 };
+              <tbody className="divide-y divide-zinc-100">
+                {displayEntries.map((entry) => {
+                  const computedMonthData = computeMonthDataForEntry(entry);
+                  
+                  return (
+                    <tr key={entry.id} className="hover:bg-zinc-50/40 transition-colors group">
+                      <td className="p-4 sticky left-0 bg-white shadow-[3px_0_12px_-5px_rgba(0,0,0,0.12)] z-10 border-r border-zinc-100">
+                        <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer_name}</p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-extrabold text-zinc-500 flex items-center gap-1 bg-zinc-50 px-1.5 py-0.5 rounded border border-zinc-150">
+                            <AlertCircle className="h-2.5 w-2.5 text-zinc-400" /> {entry.unit}
+                          </span>
+                          <span className="text-[10px] font-black px-1.5 py-0.5 bg-black/5 text-zinc-700 rounded uppercase tracking-wide">
+                            {employees.find(e => e.id === entry.salesperson_id || e.full_name === entry.salesperson_id)?.full_name || entry.salesperson_id || 'Unassigned'}
+                          </span>
+                          <span className="text-[10px] font-bold text-zinc-400 italic">@{entry.branch}</span>
+                        </div>
+                      </td>
                       
-                      return (
-                        <td key={month} className="p-4 transition-all border-x border-zinc-50">
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between px-3 py-1 bg-zinc-100/50 rounded-lg">
-                              <span className="text-[8px] font-black text-zinc-400 uppercase">Target Value</span>
-                              <span className="text-[10px] font-black tabular-nums">{formatCurrency(data.target)}</span>
-                            </div>
-                            
-                            <div className="relative group/input">
-                              <label className="absolute -top-2 left-2 px-1 bg-white text-[7px] font-black text-zinc-300 uppercase z-10">Actual Amount</label>
-                              <Input 
-                                type="number"
-                                className="h-9 px-2 text-[10px] font-bold tabular-nums rounded-lg border-zinc-200"
-                                placeholder={formatCurrency(data.target)}
-                                value={data.actual === undefined || data.actual === null ? '' : data.actual}
-                                spellCheck={false}
-                                data-gramm="false"
-                                onChange={e => updateActual(entry.id, month, e.target.value)}
-                              />
-                            </div>
-                            
-                            <div className={cn(
-                              "flex items-center justify-between px-3 py-1.5 rounded-lg border border-dashed",
-                              data.gap > 0 ? "bg-green-50 border-green-100" : (data.gap < 0 ? "bg-red-50 border-red-100" : "bg-zinc-50 border-zinc-100")
-                            )}>
-                              <span className="text-[9px] font-black text-zinc-500 uppercase">GAP</span>
-                              <span className={cn(
-                                "text-[10px] font-black tabular-nums",
-                                data.gap > 0 ? "text-green-600" : (data.gap < 0 ? "text-red-500" : "text-zinc-600")
+                      {MONTHS.map(month => {
+                        const monthDataVal = computedMonthData[month];
+                        const originalTarget = monthDataVal.target;
+                        const totalTarget = monthDataVal.totalTarget;
+                        const actualVal = monthDataVal.actual;
+                        const gap = monthDataVal.gap;
+                        const carryForward = monthDataVal.carryForward;
+                        const hasActual = actualVal !== undefined && actualVal !== null && actualVal !== '' && Number(actualVal) > 0;
+                        
+                        return (
+                          <td key={month} className="p-4 transition-all border-x border-zinc-50 bg-white hover:bg-zinc-50/10">
+                            <div className="space-y-3.5">
+                              {/* Target Values Block - Bold, Professional, Clean */}
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-100 border border-zinc-200 rounded-lg">
+                                  <span className="text-[9px] font-black text-zinc-700 uppercase tracking-wider">Target Value</span>
+                                  <span className="text-[11px] font-black text-zinc-950 tabular-nums">{formatCurrency(originalTarget)}</span>
+                                </div>
+                                <div className={cn(
+                                  "flex items-center justify-between px-3 py-1.5 rounded-lg border transition-colors",
+                                  carryForward < 0 
+                                    ? "bg-amber-100 border-amber-300 text-amber-950" 
+                                    : carryForward > 0 
+                                      ? "bg-sky-100 border-sky-300 text-sky-950"
+                                      : "bg-zinc-50 border-zinc-200/50 text-zinc-500"
+                                )}>
+                                  <span className="text-[9px] font-black uppercase tracking-wider">Total Target</span>
+                                  <span className={cn(
+                                    "text-[11px] font-black tabular-nums",
+                                    carryForward < 0 ? "text-amber-900" : carryForward > 0 ? "text-sky-900" : "text-zinc-650"
+                                  )}>
+                                    {formatCurrency(totalTarget)}
+                                  </span>
+                                </div>
+                              </div>
+                              
+                              {/* Input Box Block - Highlight in yellow when actual amount entered */}
+                              <div className="relative group/input pt-1.5">
+                                <label className={cn(
+                                  "absolute -top-1 left-2 px-1.5 py-0.5 text-[8px] font-black uppercase z-10 rounded-md transition-colors border shadow-sm tracking-wider",
+                                  hasActual 
+                                    ? "bg-yellow-300 border-yellow-500 text-yellow-950" 
+                                    : "bg-zinc-100 border-zinc-300 text-zinc-600"
+                                )}>
+                                  Actual Amount
+                                </label>
+                                <Input 
+                                  type="number"
+                                  className={cn(
+                                    "h-10 px-2.5 text-[11px] tabular-nums rounded-lg border-zinc-300 transition-colors pt-1.5",
+                                    hasActual 
+                                      ? "bg-yellow-100 border-yellow-400 text-black font-black focus:bg-yellow-50 focus:border-yellow-500 shadow-sm" 
+                                      : "font-bold text-zinc-800"
+                                  )}
+                                  placeholder={formatCurrency(totalTarget)}
+                                  value={actualVal === undefined || actualVal === null ? '' : actualVal}
+                                  spellCheck={false}
+                                  data-gramm="false"
+                                  onChange={e => updateActual(entry.id, month, e.target.value)}
+                                />
+                              </div>
+                              
+                              {/* Gap Block - Highly styled, bold values */}
+                              <div className={cn(
+                                "flex items-center justify-between px-3 py-1.5 rounded-lg border",
+                                gap > 0 
+                                  ? "bg-emerald-50 border-emerald-300 text-emerald-950 font-black" 
+                                  : gap < 0 
+                                    ? "bg-rose-50 border-rose-300 text-rose-950 font-black" 
+                                    : "bg-zinc-50 border-zinc-200 text-zinc-500"
                               )}>
-                                {data.gap > 0 ? `+${formatCurrency(data.gap)}` : (data.gap < 0 ? `-${formatCurrency(Math.abs(data.gap))}` : formatCurrency(0))}
-                              </span>
+                                <span className="text-[10px] font-black uppercase tracking-wider">GAP</span>
+                                <span className={cn(
+                                  "text-[11px] font-extrabold tabular-nums",
+                                  gap > 0 ? "text-emerald-700 font-black" : (gap < 0 ? "text-rose-600 font-black animate-pulse" : "text-zinc-650")
+                                )}>
+                                  {gap > 0 ? `+${formatCurrency(gap)}` : (gap < 0 ? `-${formatCurrency(Math.abs(gap))}` : formatCurrency(0))}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
