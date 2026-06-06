@@ -741,7 +741,7 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               <thead>
                 <tr className="bg-zinc-900 text-white">
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest sticky left-0 top-0 bg-zinc-900 z-30 w-12 text-center">#</th>
-                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[200px] sticky top-0 bg-zinc-900 z-20">Customer Name</th>
+                  <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[200px] sticky left-12 top-0 bg-zinc-900 z-30 border-r border-zinc-800">Customer Name</th>
                   <th className="p-4 text-left text-[10px] font-black uppercase tracking-widest min-w-[120px] sticky top-0 bg-zinc-900 z-20">Unit</th>
                   {MONTHS.map(m => (
                     <th key={m} className="p-4 text-center text-[10px] font-black uppercase tracking-widest min-w-[140px] sticky top-0 bg-zinc-900 z-20">
@@ -754,8 +754,8 @@ export default function TargetPlanning({ user, rows, setRows, filters, setFilter
               <tbody className="divide-y divide-zinc-100">
                 {displayRows.map((row, index) => (
                   <tr key={row.id} className="hover:bg-zinc-50 transition-colors group">
-                    <td className="p-4 text-xs font-black text-zinc-300 sticky left-0 bg-white group-hover:bg-zinc-50 z-10 text-center">{index + 1}</td>
-                    <td className="p-4">
+                    <td className="p-4 text-xs font-black text-zinc-300 sticky left-0 bg-white group-hover:bg-zinc-50 z-10 text-center border-r border-zinc-100/50">{index + 1}</td>
+                    <td className="p-4 sticky left-12 bg-white group-hover:bg-zinc-50 z-10 border-r border-zinc-150 min-w-[200px]">
                       <Input 
                         placeholder="Customer..." 
                         className="h-9 text-xs font-black border-none bg-zinc-50/50 rounded-lg px-2 focus-visible:ring-1 focus-visible:ring-black mb-1"

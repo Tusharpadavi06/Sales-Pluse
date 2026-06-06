@@ -552,10 +552,10 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
       <Card className="border-none shadow-md overflow-hidden bg-white rounded-2xl border border-zinc-200/50">
         <CardContent className="p-0">
           <div className="overflow-auto max-h-[calc(100vh-320px)] border-b border-zinc-200">
-            <table className="w-full border-collapse">
+             <table className="w-full border-collapse">
               <thead>
                 <tr className="bg-zinc-100 border-b-2 border-zinc-200">
-                  <th className="p-4 text-left text-xs font-black uppercase tracking-widest text-zinc-800 sticky left-0 top-0 bg-zinc-100 z-30 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] border-r border-zinc-200/85">
+                  <th className="p-4 text-left text-xs font-black uppercase tracking-widest text-zinc-800 sticky left-0 top-0 bg-zinc-100 z-30 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] border-r border-zinc-200/85 min-w-[240px] md:min-w-[280px]">
                     Entity Context
                   </th>
                   {MONTHS.map(month => (
@@ -571,7 +571,7 @@ export default function ActualEntry({ user, entries, setEntries, filters, setFil
                   
                   return (
                     <tr key={entry.id} className="hover:bg-zinc-50/40 transition-colors group">
-                      <td className="p-4 sticky left-0 bg-white shadow-[3px_0_12px_-5px_rgba(0,0,0,0.12)] z-10 border-r border-zinc-100">
+                      <td className="p-4 sticky left-0 bg-white shadow-[3px_0_12px_-5px_rgba(0,0,0,0.12)] z-10 border-r border-zinc-100 min-w-[240px] md:min-w-[280px]">
                         <p className="text-sm font-black text-black leading-tight mb-1">{entry.customer_name}</p>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-[10px] font-extrabold text-zinc-500 flex items-center gap-1 bg-zinc-50 px-1.5 py-0.5 rounded border border-zinc-150">

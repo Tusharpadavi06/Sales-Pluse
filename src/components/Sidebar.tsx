@@ -7,7 +7,8 @@ import {
   LogOut, 
   BarChart3,
   User,
-  Building2
+  Building2,
+  X
 } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { Profile } from '@/src/types';
@@ -15,9 +16,11 @@ import { cn } from '@/src/lib/utils';
 
 interface SidebarProps {
   user: Profile;
+  isOpen: boolean;
+  onClose: () => void;
 }
 
-export default function Sidebar({ user }: SidebarProps) {
+export default function Sidebar({ user, isOpen, onClose }: SidebarProps) {
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
@@ -29,8 +32,29 @@ export default function Sidebar({ user }: SidebarProps) {
   ];
 
   return (
-    <aside className="w-64 bg-white border-r border-zinc-100 flex flex-col h-screen sticky top-0">
-      <div className="p-4 flex flex-col items-center justify-center gap-3.5 border-b border-zinc-100 bg-zinc-50/50">
+    <>
+      {/* Mobile Backdrop */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black/40 backdrop-blur-xs z-40 md:hidden"
+          onClick={onClose}
+        />
+      )}
+
+      <aside className={cn(
+        "w-64 bg-white border-r border-zinc-100 flex flex-col h-screen fixed inset-y-0 left-0 z-50 md:sticky top-0 transition-transform duration-300 ease-in-out",
+        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      )}>
+        {/* Close Button - Mobile Only */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1 rounded-lg text-zinc-400 hover:text-black hover:bg-zinc-100 md:hidden"
+          title="Close Navigation"
+        >
+          <X className="h-5 w-5" />
+        </button>
+
+        <div className="p-4 flex flex-col items-center justify-center gap-3.5 border-b border-zinc-100 bg-zinc-50/50">
         <img 
           src="https://www.ginzalimited.com/cdn/shop/files/Ginza_logo.jpg?v=1668509673&width=800" 
           alt="GINZA Logo" 
@@ -48,6 +72,7 @@ export default function Sidebar({ user }: SidebarProps) {
           <NavLink
             key={item.path}
             to={item.path}
+            onClick={onClose}
             className={({ isActive }) => cn(
               "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all",
               isActive 
@@ -91,5 +116,6 @@ export default function Sidebar({ user }: SidebarProps) {
         </button>
       </div>
     </aside>
+    </>
   );
 }
